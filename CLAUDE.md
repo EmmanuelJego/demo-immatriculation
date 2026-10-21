@@ -1,0 +1,210 @@
+# CLAUDE.md
+
+Instructions pour l'agent de code travaillant sur ce dépôt. Contexte général : [README.md](README.md).
+Simplifications assumées : [CHOICES.md](CHOICES.md). Les lire avant toute tâche.
+
+## Commandes
+
+```bash
+pnpm test            # tests unitaires (*.spec.ts)
+pnpm test:e2e        # tests d'intégration API (*.e2e-spec.ts), base PostgreSQL de test requise
+pnpm lint            # oxlint sur src/ et test/
+pnpm format          # prettier
+pnpm build           # compilation + vérification de types
+pnpm start:dev       # API en mode watch
+```
+
+Gestionnaire de paquets : **pnpm** uniquement. Node 22, projet **ESM** (`"type": "module"`) : les imports relatifs
+prennent l'extension `.js` (`import { AppModule } from './app.module.js'`).
+
+## Notions métier
+
+### Glossaire
+
+La documentation est en français, le code (identifiants, routes, schémas, noms de tests) en anglais.
+Utiliser **exactement** ces termes, sans synonymes.
+
+| Métier (FR)                 | Code (EN)                              | Définition                                                                                     |
+| --------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Registre                    | `Registry`                             | L'ensemble des projets immatriculés.                                                           |
+| Projet                      | `Project`                              | Projet porté par une collectivité, identifié par son immatriculation.                          |
+| Immatriculation             | `Project.id`                           | Identifiant unique, opaque et pérenne attribué par le registre. Jamais réutilisé ni modifié.   |
+| Immatriculer                | `register`                             | Créer un projet dans le registre.                                                              |
+| Intitulé                    | `label`                                | Libellé du projet.                                                                             |
+| Collectivité porteuse       | `ownerSiren`                           | SIREN (9 chiffres) de la collectivité qui porte le projet.                                     |
+| Clé source                  | `SourceKey { system, externalId }`     | Identifiant d'un projet dans un système tiers (guichet, démarche de financement…).             |
+| Rattachement                | `attach` / `SourceKeyAttached`         | Association d'une clé source à un projet.                                                      |
+| Fusion                      | `merge`                                | Absorption de projets doublons dans un projet survivant.                                       |
+| Projet survivant            | `survivor`                             | Projet qui absorbe les autres lors d'une fusion et garde son immatriculation.                  |
+| Projets absorbés            | `absorbed`                             | Projets qui disparaissent lors d'une fusion et redirigent vers le survivant.                   |
+| Scission                    | `split`                                | Découpage d'un projet en plusieurs nouveaux projets.                                           |
+| Projets issus               | `successors`                           | Projets créés par une scission.                                                                |
+| Statut                      | `ProjectStatus`                        | `ACTIVE`, `MERGED` ou `SPLIT`.                                                                 |
+| Journal                     | `EventLog` / `ProjectEvent`            | Historique append-only de toutes les actions sur le registre.                                  |
+
+### Invariants
+
+Ces règles sont la spécification. Chacune doit être couverte par au moins un test.
+
+**Projet et immatriculation**
+- L'immatriculation est générée par le serveur, au format `PRJ-XXXX-XXXX` (Crockford Base32, sans `I L O U`).
+  Elle n'est jamais modifiée, réutilisée ni supprimée, même quand le projet est fusionné ou scindé.
+- Seul un projet `ACTIVE` accepte des commandes (rattachement, fusion, scission). Les statuts `MERGED` et `SPLIT` sont terminaux.
+- Un projet n'est jamais supprimé physiquement.
+
+**Clé source et rattachement**
+- Une clé source (`system` + `externalId`) appartient à **au plus un** projet à un instant donné (contrainte d'unicité en base).
+- Un projet `ACTIVE` possède toujours au moins une clé source.
+- Rattacher une clé source déjà rattachée au même projet ne change rien (rejeu). La rattacher alors qu'elle appartient
+  à un autre projet est un conflit (`409`).
+
+**Immatriculation (création)**
+- La création exige une clé source initiale, qui sert de clé naturelle d'idempotence.
+- Si la clé source existe déjà avec les mêmes attributs : on renvoie le projet existant (`200`), sans nouvel événement.
+- Si elle existe déjà avec des attributs différents : `409`.
+
+**Fusion (par absorption)**
+- Entrée : un survivant `S` (dans l'URL) et une liste non vide de projets absorbés `A`. `S ∉ A`, sinon `422`.
+- `S` et les projets de `A` à traiter doivent être `ACTIVE`.
+- Effet : chaque projet absorbé passe à `MERGED`, porte `mergedInto = S`, et ses clés sources sont transférées à `S`.
+- Idempotence : les projets de `A` déjà fusionnés dans `S` sont ignorés. S'il n'en reste aucun, on renvoie `S`
+  sans nouvel événement. Si un projet de `A` est fusionné ailleurs ou scindé : `409`.
+- Consulter un projet absorbé renvoie `200` avec `status: MERGED` et `mergedInto` : c'est la **redirection**.
+  Les clients suivent ce lien. Aucune redirection HTTP n'est faite.
+
+**Scission**
+- Entrée : un projet source `P` et au moins 2 projets issus, chacun avec un `label`, un `ownerSiren` et au moins une clé source.
+- Chaque clé source de `P` est attribuée à **exactement un** projet issu. Les projets issus peuvent aussi
+  apporter de nouvelles clés sources, non rattachées ailleurs.
+- Effet : `P` passe à `SPLIT` et porte `splitInto = [ids des projets issus]`. Les projets issus sont créés en `ACTIVE`.
+- Idempotence : si `P` est déjà `SPLIT` avec la même répartition des clés sources, on renvoie les projets issus
+  existants (`200`) sans nouvel événement. Si la répartition diffère : `409`.
+
+**Journal d'événements**
+- Types : `ProjectRegistered`, `SourceKeyAttached`, `ProjectsMerged`, `ProjectSplit`.
+- Chaque changement d'état écrit **son** événement **dans la même transaction**. Pas de changement d'état sans
+  événement, et pas d'événement sans changement d'état.
+- Le journal est **append-only** : jamais d'`UPDATE` ni de `DELETE`. C'est garanti en base, par un trigger, et pas seulement dans le code.
+- Chaque événement porte un numéro de séquence global croissant (`sequence`), sa date (`occurredAt`), son type,
+  les identifiants des projets concernés et un `payload` décrivant l'action.
+- Un rejeu idempotent n'écrit **aucun** événement.
+
+**Concurrence**
+- Toute commande verrouille les projets concernés (`SELECT … FOR UPDATE`), **dans l'ordre croissant des identifiants**
+  pour éviter les interblocages.
+
+### API cible (v1)
+
+Cette liste est indicative. Le contrat de référence est la spec OpenAPI générée.
+
+| Méthode | Route                                         | Rôle                                               | Succès                       |
+| ------- | --------------------------------------------- | -------------------------------------------------- | ---------------------------- |
+| POST    | `/v1/projects`                                | Immatriculer un projet                             | `201` + `Location`, rejeu `200` |
+| GET     | `/v1/projects/{id}`                           | Consulter un projet (quel que soit son statut)     | `200`                        |
+| GET     | `/v1/projects?system=…&externalId=…`          | Retrouver un projet par clé source (liste paginée) | `200`                        |
+| POST    | `/v1/projects/{id}/source-keys`               | Rattacher une clé source                           | `201`, rejeu `200`           |
+| POST    | `/v1/projects/{id}/merges`                    | Absorber des projets dans `{id}`                   | `200`                        |
+| POST    | `/v1/projects/{id}/splits`                    | Scinder `{id}`                                     | `201`, rejeu `200`           |
+| GET     | `/v1/projects/{id}/events`                    | Journal d'un projet                                | `200`                        |
+| GET     | `/v1/events?after={sequence}&limit=…`         | Journal global, pagination par curseur             | `200`                        |
+
+Hors périmètre : authentification, modification des attributs d'un projet, détachement d'une clé source,
+annulation d'une fusion, déduplication automatique, ETL, backfill.
+
+## Méthodologie
+
+### TDD, toujours
+
+Aucune ligne de code de production sans un test rouge qui la justifie. Suivre la skill `tdd`.
+
+1. **Red** : écrire **un** test qui décrit **un** comportement à partir de l'interface publique, puis le voir échouer pour la bonne raison.
+2. **Green** : écrire le code minimal qui le fait passer.
+3. **Refactor** : nettoyer avec les tests au vert, puis repasser au test suivant.
+
+Avancer par tranches verticales : un comportement traverse toutes les couches (contrôleur → use case → domaine → base)
+avant de passer au suivant. Ne pas écrire tous les tests d'abord.
+
+### Deux niveaux de tests, tous deux obligatoires
+
+**Tests unitaires** (`src/**/*.spec.ts`, à côté du code)
+- Ils ciblent le domaine : invariants, transitions de statut, règles de fusion et de scission, génération d'immatriculation.
+- Le domaine est du TypeScript pur. Il ne mocke rien, car il n'a pas de dépendance.
+
+**Tests d'intégration API** (`test/**/*.e2e-spec.ts`, avec Supertest)
+- Ils démarrent l'application Nest complète (`AppModule`, mêmes pipes et filtres qu'en prod) et l'appellent en HTTP.
+- Ils utilisent une **vraie base PostgreSQL de test**, jamais de mock du repository ou de Drizzle. La base est
+  configurée par `DATABASE_URL` et migrée avant la suite.
+- Chaque test part d'une base vide (`TRUNCATE … RESTART IDENTITY CASCADE` en `beforeEach`). Les fichiers e2e
+  s'exécutent séquentiellement, car ils partagent la base.
+- Pour chaque endpoint, couvrir au minimum : le cas nominal, la validation (`400`), la ressource inconnue (`404`),
+  les conflits métier (`409`/`422`), le **rejeu idempotent** (même réponse, aucun événement en plus) et
+  **l'événement écrit au journal**.
+- Les assertions portent sur la réponse HTTP et sur l'état observable via l'API. Ne lire la base directement que
+  pour vérifier ce que l'API n'expose pas.
+
+Les noms de tests décrivent un comportement : `it('returns the existing project when the source key is replayed')`.
+
+### Architecture
+
+Un module Nest par fonctionnalité. Dépendances orientées vers le domaine :
+
+```
+src/
+  projects/
+    domain/           # entités, value objects, invariants, erreurs métier — sans import de Nest ni de Drizzle
+    application/      # use cases (register, attach, merge, split), orchestration et transactions
+    infrastructure/   # repositories Drizzle, implémentant les interfaces du domaine
+    api/              # contrôleurs, DTOs d'entrée/sortie, mapping des erreurs
+  events/             # journal : écriture (dans la transaction de la commande) et lecture
+  database/           # schéma Drizzle, client, module, migrations
+```
+
+- Les repositories sont exposés par des interfaces et injectés par token (skill `nestjs-best-practices`).
+- Un use case ouvre **une seule** transaction, qui couvre le changement d'état et l'écriture de l'événement.
+- Le domaine lève des erreurs métier typées. Un exception filter les traduit en réponses HTTP. Pas de
+  `HttpException` dans le domaine.
+- Clean code (skill `clean-code`) : fonctions courtes, noms explicites, pas de commentaire qui paraphrase le code,
+  données immuables (on renvoie de nouveaux objets au lieu de muter).
+
+### Persistance (Drizzle + PostgreSQL)
+
+- Le schéma est décrit en TypeScript dans `src/database/`. Les migrations sont générées par `drizzle-kit`, versionnées,
+  et **jamais modifiées une fois commitées**.
+- Les contraintes métier sont aussi portées par la base : unicité de `(system, external_id)`, `CHECK` sur les statuts,
+  clés étrangères, trigger append-only sur le journal.
+- Pas de requête N+1 : charger un projet avec ses clés sources en une requête ou en un lot.
+
+### Design de l'API
+
+Suivre les skills `api-and-interface-design` et `nestjs-best-practices`.
+
+- **RESTful** : ressources au pluriel et en kebab-case, verbes HTTP sémantiques, codes de statut exacts.
+  Les commandes métier (fusion, scission) sont des sous-ressources en `POST`.
+- **Versionnée** dans l'URI (`VersioningType.URI`, préfixe `/v1`). Un changement incompatible impose une nouvelle version.
+- **Contrats explicites** : chaque endpoint a un DTO d'entrée (validé par `class-validator` via un `ValidationPipe`
+  global en `whitelist` + `forbidNonWhitelisted`) et un DTO de sortie. On ne renvoie jamais une ligne Drizzle ni
+  une entité du domaine telle quelle.
+- **OpenAPI** : chaque DTO et chaque contrôleur est documenté avec `@nestjs/swagger` (`@ApiProperty`, `@ApiOkResponse`,
+  `@ApiConflictResponse`…), y compris les réponses d'erreur. La spec est servie sur `/docs` (JSON sur `/docs-json`).
+  Elle constitue le contrat : toute évolution de l'API passe par elle.
+- **Erreurs** au format Problem Details (RFC 9457, `application/problem+json`) : `type`, `title`, `status`,
+  `detail`, et `errors` pour la validation.
+  - `400` : requête mal formée ou invalide (schéma).
+  - `404` : ressource inconnue.
+  - `409` : conflit avec l'état du registre (projet non `ACTIVE`, clé source déjà rattachée ailleurs, rejeu divergent).
+  - `422` : requête bien formée mais incohérente en elle-même (survivant parmi les absorbés, clé source non répartie).
+- **Pagination** des listes par curseur (`after`, `limit`, avec un plafond).
+- Dates en ISO 8601 UTC. Champs JSON en camelCase.
+
+### Définition de « terminé »
+
+Une tâche n'est terminée que si :
+
+1. les tests ont été écrits avant le code, et `pnpm test` et `pnpm test:e2e` passent ;
+2. `pnpm lint` ne remonte rien, et `pnpm format` a été lancé ;
+3. `pnpm build` passe ;
+4. la spec OpenAPI reflète le comportement réel, y compris les erreurs ;
+5. toute nouvelle simplification propre à la démo est ajoutée dans [CHOICES.md](CHOICES.md) ;
+6. le commit suit les Conventional Commits (`feat:`, `fix:`, `test:`, `refactor:`, `docs:`, `chore:`).
+
+Lancer le linter **après chaque tâche**, sans attendre la fin d'une série.

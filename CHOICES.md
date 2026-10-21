@@ -1,0 +1,45 @@
+# Choix de la démo
+
+Ce fichier recense les simplifications faites pour ce projet de démonstration. Elles sont cohérentes avec son
+périmètre, mais seraient probablement à revoir sur le vrai registre.
+
+## Idempotence par clé naturelle uniquement
+
+Chaque commande est dédupliquée par son contenu métier. Une création l'est par sa clé source, une fusion
+par le couple survivant/absorbés, une scission par la répartition des clés sources.
+
+En production : on ajouterait un header `Idempotency-Key` sur toutes les commandes, avec stockage de la réponse
+et `422` si une même clé arrive avec un corps différent. Cela couvre les commandes sans clé naturelle évidente et
+permet de rejouer une réponse à l'identique (y compris ses en-têtes).
+
+## Fusion par absorption
+
+Un projet survivant garde son immatriculation, les autres sont marqués `MERGED`.
+
+## Scission : le projet source est clos
+
+Une scission crée au moins deux nouveaux projets. Le projet source passe à `SPLIT`, et chacune de ses
+clés sources est réattribuée à exactement un projet issu.
+
+## Redirection exposée dans la ressource
+
+Un projet absorbé reste consultable (`200`, `status: MERGED`, `mergedInto`). Il n'y a ni `301`/`308`
+ni événement `Redirected` distinct, la redirection découlant de la fusion.
+
+## Format d'immatriculation
+
+`PRJ-XXXX-XXXX`, aléatoire, en Crockford Base32, avec une contrainte d'unicité en base et un nouveau
+tirage en cas de collision.
+
+## Création en conflit plutôt que mise à jour
+
+Rejouer une création avec la même clé source mais des attributs différents renvoie `409`.
+
+## Modèle de projet minimal
+
+Un projet a seulement un `label` et un `ownerSiren`.
+
+## Hors périmètre
+
+Authentification et autorisation des systèmes appelants, rate limiting, ETL et déduplication automatique, backfill
+du stock existant, déploiement (Scalingo), observabilité.
