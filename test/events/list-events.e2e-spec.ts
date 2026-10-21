@@ -4,10 +4,9 @@ import type { App } from 'supertest/types.js';
 import { DATABASE } from '../../src/database/database.module.js';
 import type { EventLogEntry } from '../../src/events/domain/event.js';
 import { DrizzleEventLog } from '../../src/events/infrastructure/drizzle-event-log.js';
-import { anEvent } from '../support/events.js';
+import { anEvent, EVENTS_PATH } from '../support/events.js';
 import { createTestApp, resetDatabase } from '../support/test-app.js';
 
-const EVENTS_PATH = '/v1/events';
 const MAX_PAGE_SIZE = 200;
 
 describe('GET /v1/events', () => {

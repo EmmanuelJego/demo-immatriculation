@@ -35,6 +35,16 @@ tirage en cas de collision.
 
 Rejouer une création avec la même clé source mais des attributs différents renvoie `409`.
 
+## Rejeu : seuls les attributs sont comparés
+
+Le rejeu d'une immatriculation compare `label` et `ownerSiren` au projet qui possède la clé source, sans regarder son
+statut. Si la clé a été transférée par une fusion, le rejeu de l'immatriculation d'origine renverra donc un conflit,
+puisque les attributs du survivant diffèrent. C'est à revoir avec la fusion.
+
+## Identifiant mal formé : `404`, pas `400`
+
+`GET /v1/projects/{id}` répond `404` à un id qui n'a pas le format `PRJ-XXXX-XXXX` : aucun projet ne peut le porter.
+
 ## Modèle de projet minimal
 
 Un projet a seulement un `label` et un `ownerSiren`.

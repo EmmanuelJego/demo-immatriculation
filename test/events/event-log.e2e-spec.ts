@@ -3,6 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import { DATABASE, type Database } from '../../src/database/database.module.js';
 import { projectEvents } from '../../src/database/schema.js';
 import { DrizzleEventLog } from '../../src/events/infrastructure/drizzle-event-log.js';
+import { deferred, waitForLockWait } from '../support/concurrency.js';
 import { anEvent } from '../support/events.js';
 import { createTestApp, resetDatabase } from '../support/test-app.js';
 
@@ -63,12 +64,14 @@ describe('Event log', () => {
       const fastCommand = db.transaction((tx) =>
         new DrizzleEventLog(tx).append(anEvent()),
       );
-      await settleBriefly();
-      const visibleWhileFirstIsOpen = await eventLog.list(FIRST_PAGE);
-
-      releaseFirst.resolve();
-      await Promise.all([slowCommand, fastCommand]);
-      expect(visibleWhileFirstIsOpen.items).toEqual([]);
+      try {
+        await waitForLockWait(db);
+        const visibleWhileFirstIsOpen = await eventLog.list(FIRST_PAGE);
+        expect(visibleWhileFirstIsOpen.items).toEqual([]);
+      } finally {
+        releaseFirst.resolve();
+        await Promise.all([slowCommand, fastCommand]);
+      }
     });
 
     it('dates events in sequence order, even when a later sequence comes from an earlier transaction', async () => {
@@ -133,15 +136,6 @@ describe('Event log', () => {
     });
   });
 });
-
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve: () => void = () => {};
-  const promise = new Promise<void>((done) => (resolve = done));
-  return { promise, resolve };
-}
-
-// Leaves a concurrent transaction enough time to commit if nothing blocks it.
-const settleBriefly = () => new Promise((done) => setTimeout(done, 200));
 
 // Drizzle wraps driver errors: PostgreSQL's message is on `cause`.
 async function expectCause(

@@ -1,6 +1,13 @@
 import { BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 import type { ValidationError } from 'class-validator';
 import { STATUS_CODES } from 'node:http';
+import { DomainError, type DomainErrorKind } from '../errors/domain-error.js';
+
+const STATUS_BY_DOMAIN_ERROR_KIND: Record<DomainErrorKind, HttpStatus> = {
+  'not-found': HttpStatus.NOT_FOUND,
+  conflict: HttpStatus.CONFLICT,
+  invalid: HttpStatus.UNPROCESSABLE_ENTITY,
+};
 
 export interface FieldError {
   readonly field: string;
@@ -23,6 +30,17 @@ export class RequestValidationException extends BadRequestException {
 }
 
 export function toProblemDetails(exception: unknown): ProblemDetails {
+  if (exception instanceof DomainError) {
+    return {
+      ...problem(
+        new HttpException(
+          exception.message,
+          STATUS_BY_DOMAIN_ERROR_KIND[exception.kind],
+        ),
+      ),
+      type: `urn:immatriculation:problem:${exception.code}`,
+    };
+  }
   if (exception instanceof RequestValidationException) {
     return { ...problem(exception), errors: exception.errors };
   }

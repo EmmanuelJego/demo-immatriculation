@@ -1,15 +1,20 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
+import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import { sql } from 'drizzle-orm';
 import type { App } from 'supertest/types.js';
 import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
 import { DATABASE, type Database } from '../../src/database/database.module.js';
 
-export async function createTestApp(): Promise<INestApplication<App>> {
-  const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
-  }).compile();
+// `customize` can override providers, e.g. to make a generator deterministic.
+export async function createTestApp(
+  customize: (builder: TestingModuleBuilder) => TestingModuleBuilder = (
+    builder,
+  ) => builder,
+): Promise<INestApplication<App>> {
+  const moduleRef = await customize(
+    Test.createTestingModule({ imports: [AppModule] }),
+  ).compile();
 
   const app = moduleRef.createNestApplication<INestApplication<App>>();
   configureApp(app);

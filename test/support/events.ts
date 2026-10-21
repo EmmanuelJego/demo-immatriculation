@@ -1,5 +1,7 @@
 import type { NewEvent } from '../../src/events/domain/event.js';
 
+export const EVENTS_PATH = '/v1/events';
+
 export function anEvent(overrides: Partial<NewEvent> = {}): NewEvent {
   return {
     type: 'ProjectRegistered',

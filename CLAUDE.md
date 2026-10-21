@@ -181,12 +181,25 @@ src/
   common/             # transverse : Problem Details (http/), pagination par curseur (pagination/)
 ```
 
-- **Écrire au journal** : un use case construit `new DrizzleEventLog(tx)` sur **sa** transaction (`db.transaction(async (tx) => …)`)
-  et appelle `append`. Les adapters reçoivent un `DatabaseExecutor` (base ou transaction), jamais la connexion globale.
-  `append` prend un verrou global gardé jusqu'au commit (voir CHOICES.md) : l'appeler **en dernier** dans la
-  transaction, après les verrous `FOR UPDATE` sur les projets. L'ordre des verrous est alors toujours le même, sans
-  interblocage, et le verrou est tenu le moins longtemps possible.
-  Chaque type d'événement ajoute son payload typé à `NewEvent` (`src/events/domain/event.ts`), qui devient ainsi une union discriminée.
+- **Commandes et transactions** : un use case passe **uniquement** par l'`UnitOfWork`
+  (`src/projects/application/unit-of-work.ts`). `run(async ({ projects, events }) => …)` ouvre une transaction et
+  fournit les repositories et le journal liés à celle-ci : aucune écriture n'est possible hors de la transaction.
+  Les adapters reçoivent un `DatabaseExecutor` (base ou transaction), et seule `DrizzleUnitOfWork` les instancie.
+- **Écrire au journal** : `events.append(event)`. `append` prend un verrou global gardé jusqu'au commit (voir
+  CHOICES.md) : l'appeler **en dernier** dans la transaction, après les verrous `FOR UPDATE` sur les projets. L'ordre
+  des verrous est alors toujours le même, sans interblocage, et le verrou est tenu le moins longtemps possible.
+  Chaque événement est typé dans le domaine qui le produit, et étend `NewEvent` (par exemple `ProjectRegistered`
+  dans `src/projects/domain/project.ts`). Ses payloads sont des `type`, pas des `interface`, pour rester compatibles
+  avec `JsonObject`.
+- **Erreurs métier** : les classes étendent `DomainError` (`src/common/errors/`) avec un `code` (qui donne le `type`
+  Problem Details `urn:immatriculation:problem:<code>`) et un `kind` (`not-found` → 404, `conflict` → 409,
+  `invalid` → 422).
+- **Concurrence** : un repository traduit les violations d'unicité PostgreSQL en erreurs de son contrat
+  (`DuplicateSourceKey`, `DuplicateProjectId`), et le use case rejoue alors l'unit of work entière (nombre de
+  tentatives borné). Les tests de concurrence sont déterministes (`test/support/concurrency.ts`) : une transaction
+  concurrente est tenue ouverte avec `deferred()`, et `waitForLockWait(db)` attend que la requête testée soit
+  réellement bloquée derrière elle (`pg_stat_activity`) avant de la relâcher, dans un `finally`. Jamais de
+  `Promise.all` en espérant une course, ni d'attente fixe (`setTimeout`).
 - **Lister** : `CursorPageQuery` en `@Query()`, lecture de `limit + 1` lignes puis `toPage()` (`src/common/pagination/`),
   réponse `{ data, pagination: { after, limit, nextAfter } }`.
 
@@ -226,6 +239,7 @@ Suivre les skills `api-and-interface-design` et `nestjs-best-practices`.
   - `404` : ressource inconnue.
   - `409` : conflit avec l'état du registre (projet non `ACTIVE`, clé source déjà rattachée ailleurs, rejeu divergent).
   - `422` : requête bien formée mais incohérente en elle-même (survivant parmi les absorbés, clé source non répartie).
+- **Champs texte** : en plus de leurs bornes, ils refusent U+0000, que PostgreSQL ne sait pas stocker (sinon `500`).
 - **Pagination** des listes par curseur (`after`, `limit`, avec un plafond).
 - Dates en ISO 8601 UTC. Champs JSON en camelCase.
 

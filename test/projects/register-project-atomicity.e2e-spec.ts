@@ -1,0 +1,67 @@
+import { INestApplication } from '@nestjs/common';
+import request from 'supertest';
+import type { App } from 'supertest/types.js';
+import { DATABASE, type Database } from '../../src/database/database.module.js';
+import {
+  UNIT_OF_WORK,
+  type RegistryTransaction,
+  type UnitOfWork,
+} from '../../src/projects/application/unit-of-work.js';
+import { DrizzleProjectRepository } from '../../src/projects/infrastructure/drizzle-project-repository.js';
+import { DrizzleUnitOfWork } from '../../src/projects/infrastructure/drizzle-unit-of-work.js';
+import { aRegistration, PROJECTS_PATH } from '../support/projects.js';
+import { createTestApp, resetDatabase } from '../support/test-app.js';
+
+// The real unit of work, except that writing to the event log fails, as if
+// the event could not be stored after the project was.
+class FailingEventLogUnitOfWork implements UnitOfWork {
+  private readonly inner: DrizzleUnitOfWork;
+
+  constructor(db: Database) {
+    this.inner = new DrizzleUnitOfWork(db);
+  }
+
+  run<T>(work: (tx: RegistryTransaction) => Promise<T>): Promise<T> {
+    return this.inner.run((tx) =>
+      work({
+        ...tx,
+        events: {
+          append: () => Promise.reject(new Error('event log unavailable')),
+        },
+      }),
+    );
+  }
+}
+
+describe('POST /v1/projects, when the event cannot be recorded', () => {
+  let app: INestApplication<App>;
+
+  beforeAll(async () => {
+    app = await createTestApp((builder) =>
+      builder.overrideProvider(UNIT_OF_WORK).useFactory({
+        factory: (db: Database) => new FailingEventLogUnitOfWork(db),
+        inject: [DATABASE],
+      }),
+    );
+  });
+
+  beforeEach(async () => {
+    await resetDatabase(app);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('registers nothing: no project without its event', async () => {
+    const registration = aRegistration();
+
+    const response = await request(app.getHttpServer())
+      .post(PROJECTS_PATH)
+      .send(registration);
+
+    expect(response.status).toBe(500);
+    const repository = new DrizzleProjectRepository(app.get(DATABASE));
+    expect(await repository.findBySourceKey(registration.sourceKey)).toBeNull();
+  });
+});

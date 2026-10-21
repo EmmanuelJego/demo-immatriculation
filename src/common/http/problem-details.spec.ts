@@ -1,5 +1,6 @@
 import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { ValidationError } from 'class-validator';
+import { DomainError } from '../errors/domain-error.js';
 import {
   RequestValidationException,
   toProblemDetails,
@@ -46,6 +47,30 @@ describe('toProblemDetails', () => {
       errors: fieldErrors,
     });
   });
+
+  it.each([
+    { kind: 'not-found', status: 404, title: 'Not Found' },
+    { kind: 'conflict', status: 409, title: 'Conflict' },
+    { kind: 'invalid', status: 422, title: 'Unprocessable Entity' },
+  ] as const)(
+    'maps a $kind domain error to $status with a type identifying the error',
+    ({ kind, status, title }) => {
+      const message = 'Something is wrong with the registry';
+      class SomethingWrong extends DomainError {
+        readonly code = 'something-wrong';
+        readonly kind = kind;
+      }
+
+      const problem = toProblemDetails(new SomethingWrong(message));
+
+      expect(problem).toEqual({
+        type: 'urn:immatriculation:problem:something-wrong',
+        title,
+        status,
+        detail: message,
+      });
+    },
+  );
 
   it('hides the internal message of an unexpected error behind a generic 500', () => {
     const problem = toProblemDetails(
