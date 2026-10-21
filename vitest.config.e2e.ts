@@ -1,11 +1,15 @@
 import { defineConfig } from 'vitest/config';
-import tsconfigPaths from 'vite-tsconfig-paths';
+import { testEnv } from './test/support/test-env.js';
 
 export default defineConfig({
-  plugins: [tsconfigPaths()],
+  resolve: { tsconfigPaths: true },
   test: {
     globals: true,
     root: './',
-    include: ['**/*.e2e-spec.ts'],
+    include: ['test/**/*.e2e-spec.ts'],
+    env: testEnv,
+    globalSetup: ['./test/support/global-setup.ts'],
+    // All test files share one database, wiped before each test.
+    fileParallelism: false,
   },
 });

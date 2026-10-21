@@ -6,16 +6,31 @@ Simplifications assumées : [CHOICES.md](CHOICES.md). Les lire avant toute tâch
 ## Commandes
 
 ```bash
-pnpm test            # tests unitaires (*.spec.ts)
-pnpm test:e2e        # tests d'intégration API (*.e2e-spec.ts), base PostgreSQL de test requise
+pnpm db:up           # démarre PostgreSQL de dev (:5442) et de test (:5443) via docker compose
+pnpm db:down         # arrête les conteneurs (la base de test, en mémoire, est perdue)
+pnpm db:generate     # génère une migration depuis src/database/schema.ts
+pnpm db:migrate      # applique les migrations sur la base de .env
+pnpm test            # tests unitaires (src/**/*.spec.ts)
+pnpm test:e2e        # tests d'intégration API (test/**/*.e2e-spec.ts), migre la base de test au démarrage
 pnpm lint            # oxlint sur src/ et test/
 pnpm format          # prettier
-pnpm build           # compilation + vérification de types
-pnpm start:dev       # API en mode watch
+pnpm typecheck       # tsc --noEmit (inclut les tests, contrairement à build)
+pnpm build           # compilation de src/
+pnpm start:dev       # API en mode watch, doc OpenAPI sur http://localhost:3000/docs
 ```
 
 Gestionnaire de paquets : **pnpm** uniquement. Node 22, projet **ESM** (`"type": "module"`) : les imports relatifs
-prennent l'extension `.js` (`import { AppModule } from './app.module.js'`).
+prennent l'extension `.js` (`import { AppModule } from './app.module.js'`). Un type utilisé dans une signature
+décorée s'importe avec `import type` (ou `type` inline), sinon `tsc` refuse (`isolatedModules` + `emitDecoratorMetadata`).
+
+### Environnement
+
+- `.env` (non versionné, copié depuis `.env.example`) : base de dev. Il est validé au démarrage par
+  `src/config/environment.ts`, et toute nouvelle variable s'y déclare.
+- `.env.test` (versionné) : base de test. Les tests e2e lisent **uniquement** ce fichier, jamais le shell, et
+  `resetDatabase` refuse de vider une base dont le nom ne finit pas par `_test`.
+- Helpers e2e dans `test/support/` : `createTestApp()` construit l'application avec `configureApp`, le même
+  pipeline HTTP qu'en prod (versioning, validation, OpenAPI). `resetDatabase(app)` vide toutes les tables.
 
 ## Notions métier
 
@@ -133,9 +148,9 @@ avant de passer au suivant. Ne pas écrire tous les tests d'abord.
 **Tests d'intégration API** (`test/**/*.e2e-spec.ts`, avec Supertest)
 - Ils démarrent l'application Nest complète (`AppModule`, mêmes pipes et filtres qu'en prod) et l'appellent en HTTP.
 - Ils utilisent une **vraie base PostgreSQL de test**, jamais de mock du repository ou de Drizzle. La base est
-  configurée par `DATABASE_URL` et migrée avant la suite.
-- Chaque test part d'une base vide (`TRUNCATE … RESTART IDENTITY CASCADE` en `beforeEach`). Les fichiers e2e
-  s'exécutent séquentiellement, car ils partagent la base.
+  configurée par `.env.test` et migrée par le `globalSetup` avant la suite.
+- L'application est créée une fois par fichier (`createTestApp()` en `beforeAll`), et chaque test part d'une base
+  vide (`resetDatabase(app)` en `beforeEach`). Les fichiers e2e s'exécutent séquentiellement, car ils partagent la base.
 - Pour chaque endpoint, couvrir au minimum : le cas nominal, la validation (`400`), la ressource inconnue (`404`),
   les conflits métier (`409`/`422`), le **rejeu idempotent** (même réponse, aucun événement en plus) et
   **l'événement écrit au journal**.
@@ -202,7 +217,7 @@ Une tâche n'est terminée que si :
 
 1. les tests ont été écrits avant le code, et `pnpm test` et `pnpm test:e2e` passent ;
 2. `pnpm lint` ne remonte rien, et `pnpm format` a été lancé ;
-3. `pnpm build` passe ;
+3. `pnpm typecheck` et `pnpm build` passent ;
 4. la spec OpenAPI reflète le comportement réel, y compris les erreurs ;
 5. toute nouvelle simplification propre à la démo est ajoutée dans [CHOICES.md](CHOICES.md) ;
 6. le commit suit les Conventional Commits (`feat:`, `fix:`, `test:`, `refactor:`, `docs:`, `chore:`).

@@ -35,10 +35,16 @@ Le code est écrit en TDD, et chaque endpoint est couvert par des tests d'intég
 
 ## Lancer le projet
 
+Prérequis : Node 22, pnpm, Docker.
+
 ```bash
 pnpm install
-pnpm start:dev     # API en mode watch
+cp .env.example .env
+pnpm db:up         # PostgreSQL de dev (:5442) et de test (:5443)
+pnpm db:migrate    # migrations sur la base de dev
+pnpm start:dev     # API sur http://localhost:3000, documentation OpenAPI sur /docs
+
 pnpm test          # tests unitaires
-pnpm test:e2e      # tests d'intégration API (nécessite la base de test)
+pnpm test:e2e      # tests d'intégration API sur la base de test
 pnpm lint          # oxlint
 ```

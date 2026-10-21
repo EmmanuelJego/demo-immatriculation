@@ -1,0 +1,1 @@
+-- Starts the migration history. Tables are added by the features that need them.
