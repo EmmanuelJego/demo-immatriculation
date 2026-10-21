@@ -4,6 +4,11 @@ import {
   VersioningType,
 } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import {
+  RequestValidationException,
+  toValidationErrors,
+} from './common/http/problem-details.js';
+import { ProblemDetailsFilter } from './common/http/problem-details.filter.js';
 
 // Shared by main.ts and the integration tests, so that tests exercise
 // the exact HTTP pipeline that runs in production.
@@ -14,8 +19,11 @@ export function configureApp(app: INestApplication): void {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      exceptionFactory: (errors) =>
+        new RequestValidationException(toValidationErrors(errors)),
     }),
   );
+  app.useGlobalFilters(new ProblemDetailsFilter());
   setUpOpenApi(app);
 }
 

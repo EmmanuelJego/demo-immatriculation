@@ -1,17 +1,14 @@
 import {
   Controller,
   Get,
+  HttpStatus,
   Inject,
   ServiceUnavailableException,
   VERSION_NEUTRAL,
 } from '@nestjs/common';
-import {
-  ApiOkResponse,
-  ApiProperty,
-  ApiServiceUnavailableResponse,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiOkResponse, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { sql } from 'drizzle-orm';
+import { ApiProblemResponse } from '../common/http/problem-details.response.js';
 import { DATABASE, type Database } from '../database/database.module.js';
 
 export class HealthResponse {
@@ -26,7 +23,7 @@ export class HealthController {
 
   @Get()
   @ApiOkResponse({ type: HealthResponse })
-  @ApiServiceUnavailableResponse({ description: 'Database unreachable' })
+  @ApiProblemResponse(HttpStatus.SERVICE_UNAVAILABLE, 'Database unreachable')
   async check(): Promise<HealthResponse> {
     try {
       await this.db.execute(sql`select 1`);

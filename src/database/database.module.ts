@@ -9,6 +9,8 @@ export const DATABASE = Symbol('DATABASE');
 const DATABASE_POOL = Symbol('DATABASE_POOL');
 
 export type Database = NodePgDatabase<typeof schema>;
+export type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
+export type DatabaseExecutor = Database | Transaction;
 
 @Global()
 @Module({

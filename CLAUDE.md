@@ -159,6 +159,12 @@ avant de passer au suivant. Ne pas écrire tous les tests d'abord.
 
 Les noms de tests décrivent un comportement : `it('returns the existing project when the source key is replayed')`.
 
+Une valeur utilisée à plusieurs endroits d'un test ou d'un fichier de test est déclarée **une seule fois** dans une
+constante, et l'attendu y fait référence plutôt que de la réécrire. Cela vaut pour une donnée d'entrée reprise dans
+l'assertion, une route, une taille de page, un message d'erreur… La constante est locale au test si elle ne sert qu'à
+lui, et en tête de fichier (`UPPER_SNAKE_CASE`) sinon. Les valeurs fixées par le contrat (bornes, formats) restent
+des littéraux du test et ne s'importent pas du code de production : sinon le test suivrait le code au lieu de le vérifier.
+
 ### Architecture
 
 Un module Nest par fonctionnalité. Dépendances orientées vers le domaine :
@@ -172,7 +178,17 @@ src/
     api/              # contrôleurs, DTOs d'entrée/sortie, mapping des erreurs
   events/             # journal : écriture (dans la transaction de la commande) et lecture
   database/           # schéma Drizzle, client, module, migrations
+  common/             # transverse : Problem Details (http/), pagination par curseur (pagination/)
 ```
+
+- **Écrire au journal** : un use case construit `new DrizzleEventLog(tx)` sur **sa** transaction (`db.transaction(async (tx) => …)`)
+  et appelle `append`. Les adapters reçoivent un `DatabaseExecutor` (base ou transaction), jamais la connexion globale.
+  `append` prend un verrou global gardé jusqu'au commit (voir CHOICES.md) : l'appeler **en dernier** dans la
+  transaction, après les verrous `FOR UPDATE` sur les projets. L'ordre des verrous est alors toujours le même, sans
+  interblocage, et le verrou est tenu le moins longtemps possible.
+  Chaque type d'événement ajoute son payload typé à `NewEvent` (`src/events/domain/event.ts`), qui devient ainsi une union discriminée.
+- **Lister** : `CursorPageQuery` en `@Query()`, lecture de `limit + 1` lignes puis `toPage()` (`src/common/pagination/`),
+  réponse `{ data, pagination: { after, limit, nextAfter } }`.
 
 - Les repositories sont exposés par des interfaces et injectés par token (skill `nestjs-best-practices`).
 - Un use case ouvre **une seule** transaction, qui couvre le changement d'état et l'écriture de l'événement.
@@ -203,7 +219,9 @@ Suivre les skills `api-and-interface-design` et `nestjs-best-practices`.
   `@ApiConflictResponse`…), y compris les réponses d'erreur. La spec est servie sur `/docs` (JSON sur `/docs-json`).
   Elle constitue le contrat : toute évolution de l'API passe par elle.
 - **Erreurs** au format Problem Details (RFC 9457, `application/problem+json`) : `type`, `title`, `status`,
-  `detail`, et `errors` pour la validation.
+  `detail`, et `errors: [{ field, messages }]` pour la validation. Le `ProblemDetailsFilter` global les produit à
+  partir de toute exception (`src/common/http/`). Chaque réponse d'erreur se documente avec
+  `@ApiProblemResponse(HttpStatus.X, '…')`.
   - `400` : requête mal formée ou invalide (schéma).
   - `404` : ressource inconnue.
   - `409` : conflit avec l'état du registre (projet non `ACTIVE`, clé source déjà rattachée ailleurs, rejeu divergent).
@@ -223,3 +241,7 @@ Une tâche n'est terminée que si :
 6. le commit suit les Conventional Commits (`feat:`, `fix:`, `test:`, `refactor:`, `docs:`, `chore:`).
 
 Lancer le linter **après chaque tâche**, sans attendre la fin d'une série.
+
+### Git
+
+Ne commit pas sans qu'on te l'ai explicitement demandé.

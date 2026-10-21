@@ -39,6 +39,21 @@ Rejouer une création avec la même clé source mais des attributs différents r
 
 Un projet a seulement un `label` et un `ownerSiren`.
 
+## Journal : `TRUNCATE` reste permis
+
+Un trigger interdit l'`UPDATE` et le `DELETE` sur `project_events`, mais pas le `TRUNCATE`, dont les tests ont besoin pour remettre la base à zéro.
+
+En production l'application tournerait avec un rôle PostgreSQL sans droit `TRUNCATE` (ni `UPDATE`/`DELETE`) sur le journal, et les migrations avec un rôle distinct.
+
+## Journal : écritures sérialisées par un verrou global
+
+Chaque `append` utilise un verrou de transaction, conservé jusqu'au commit.
+Sans lui, une transaction longue qui a obtenu la `sequence` 10 pourrait commiter après une autre qui a obtenu la 11 :
+un consommateur qui a déjà lu 11 avancerait son curseur et ne verrait jamais 10. Le verrou garantit que l'ordre des séquences suit l'ordre des commits, et que `occurredAt` suit le même ordre.
+
+Le coût : toutes les commandes qui écrivent au journal sont sérialisées à partir de leur `append`.
+
+
 ## Hors périmètre
 
 Authentification et autorisation des systèmes appelants, rate limiting, ETL et déduplication automatique, backfill

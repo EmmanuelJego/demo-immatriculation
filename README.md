@@ -25,6 +25,12 @@ en cas de modification de l'état de l'application entre temps.
 
 NestJS · TypeScript (ESM) · PostgreSQL · Drizzle · OpenAPI (`@nestjs/swagger`) · Vitest · Supertest · oxlint
 
+Divers skills sont installés pour donner des instructions aux agents de code.  
+Certains de ces skills apportent des décisions techniques, dont certaines que je ne prétend pas maîtriser, telle 
+que l'architecture héxagonale. L'idée ici est de démontrer la **méthode** que j'utilise pour initialiser un 
+nouveau projet. Dans un contexte réel, j'adapterai les skills à des compétences que je métrise, ou je me formerais 
+aux technologies et architectures définies.
+
 ## Comment ce dépôt est construit
 
 - [CLAUDE.md](CLAUDE.md) : instructions pour l'agent de code (règles métier, méthodologie, conventions).
