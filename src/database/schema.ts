@@ -72,14 +72,21 @@ export const sourceKeys = pgTable(
 
 export const eventType = pgEnum('event_type', EVENT_TYPES);
 
-export const projectEvents = pgTable('project_events', {
-  sequence: bigint({ mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
-  type: eventType().notNull(),
-  // Insert time, not transaction start time (now()): since appends are
-  // serialized, dates then follow the sequence order.
-  occurredAt: timestamp({ withTimezone: true })
-    .notNull()
-    .default(sql`clock_timestamp()`),
-  projectIds: text().array().notNull(),
-  payload: jsonb().$type<JsonObject>().notNull(),
-});
+export const projectEvents = pgTable(
+  'project_events',
+  {
+    sequence: bigint({ mode: 'number' })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    type: eventType().notNull(),
+    // Insert time, not transaction start time (now()): since appends are
+    // serialized, dates then follow the sequence order.
+    occurredAt: timestamp({ withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
+    projectIds: text().array().notNull(),
+    payload: jsonb().$type<JsonObject>().notNull(),
+  },
+  // Serves the history of a project (project_ids @> array[id]).
+  (table) => [index().using('gin', table.projectIds)],
+);

@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   Res,
 } from '@nestjs/common';
 import {
@@ -17,14 +18,23 @@ import {
 } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { ApiProblemResponse } from '../../common/http/problem-details.response.js';
+import { CursorPageQuery } from '../../common/pagination/cursor-page.query.js';
+import {
+  EventPageResponse,
+  toEventPageResponse,
+} from '../../events/api/event.response.js';
 import { AttachSourceKey } from '../application/attach-source-key.js';
+import { FindProjects } from '../application/find-projects.js';
 import { GetProject } from '../application/get-project.js';
+import { ListProjectEvents } from '../application/list-project-events.js';
 import { MergeProjects } from '../application/merge-projects.js';
 import { RegisterProject } from '../application/register-project.js';
 import { SplitProject } from '../application/split-project.js';
 import { PROJECT_ID_PATTERN } from '../domain/project-id.js';
+import { FindProjectsQuery } from './find-projects.query.js';
 import { MergeProjectsRequest } from './merge-projects.request.js';
 import {
+  ProjectListResponse,
   ProjectResponse,
   SplitResponse,
   toProjectResponse,
@@ -63,6 +73,8 @@ export class ProjectsController {
     private readonly attachSourceKey: AttachSourceKey,
     private readonly mergeProjects: MergeProjects,
     private readonly splitProject: SplitProject,
+    private readonly listProjectEvents: ListProjectEvents,
+    private readonly findProjects: FindProjects,
   ) {}
 
   @Post()
@@ -213,6 +225,19 @@ export class ProjectsController {
     };
   }
 
+  @Get()
+  @ApiOperation({
+    summary: 'Find the project that owns a source key',
+    description:
+      'The project the key is attached to now: after a merge or a split, the project the key was transferred to. The list holds at most one project, and is empty when no project has the key.',
+  })
+  @ApiOkResponse({ type: ProjectListResponse })
+  @ApiProblemResponse(HttpStatus.BAD_REQUEST, 'Invalid source key')
+  async find(@Query() query: FindProjectsQuery): Promise<ProjectListResponse> {
+    const projects = await this.findProjects.bySourceKey(query);
+    return { data: projects.map(toProjectResponse) };
+  }
+
   @Get(':id')
   @ApiOperation({
     summary: 'Get a project by its registration id',
@@ -223,5 +248,22 @@ export class ProjectsController {
   @ApiProblemResponse(HttpStatus.NOT_FOUND, 'No project has this id')
   async get(@Param('id') id: string): Promise<ProjectResponse> {
     return toProjectResponse(await this.getProject.execute(id));
+  }
+
+  @Get(':id/events')
+  @ApiOperation({
+    summary: 'List the history of a project in sequence order',
+    description:
+      'The events of the event log that concern the project, oldest first, whatever its status. Pass `pagination.nextAfter` as `after` to read the next page.',
+  })
+  @ApiProjectIdParam()
+  @ApiOkResponse({ type: EventPageResponse })
+  @ApiProblemResponse(HttpStatus.BAD_REQUEST, 'Invalid pagination parameters')
+  @ApiProblemResponse(HttpStatus.NOT_FOUND, 'No project has this id')
+  async events(
+    @Param('id') id: string,
+    @Query() query: CursorPageQuery,
+  ): Promise<EventPageResponse> {
+    return toEventPageResponse(await this.listProjectEvents.execute(id, query));
   }
 }

@@ -83,6 +83,25 @@ tout ait déjà été absorbé (rejeu). Le client qui veut distinguer les deux c
 
 Une requête absorbe au plus 100 projets, pour borner le nombre de verrous qu'une commande peut prendre.
 
+## Journal d'un projet : index GIN sur `project_ids`
+
+L'index GIN sert le filtre `project_ids @> array[id]`, mais ni le tri par `sequence` ni le curseur : chaque page lit
+tout l'historique du projet avant d'en trier une page. C'est sans conséquence pour des historiques de quelques
+dizaines d'événements.
+
+En production, une table de liaison `(project_id, sequence)` indexée en B-tree donnerait un parcours ordonné, dont le
+coût par page ne dépend que de la taille de la page.
+
+## Recherche par clé source : une liste sans pagination
+
+`GET /v1/projects?system=…&externalId=…` exige les deux paramètres, et renvoie `{ data: [...] }` avec le propriétaire
+**actuel** de la clé : le survivant après une fusion, le projet issu après une scission. Une clé appartient à au
+plus un projet, et la liste a donc 0 ou 1 élément : sans objet, la pagination n'est pas exposée. Une clé inconnue
+donne une liste vide (`200`), pas un `404`, car c'est une recherche.
+
+L'enveloppe `data` permettra d'ajouter des filtres (par `ownerSiren`, par statut) et la pagination par curseur sans
+rupture de contrat.
+
 ## Concurrence : nombre de tentatives borné
 
 Une commande qui perd une course sur une contrainte d'unicité est rejouée, trois fois au plus. Au-delà, elle échoue

@@ -13,5 +13,6 @@ import { DrizzleEventLog } from './infrastructure/drizzle-event-log.js';
       useFactory: (db: Database) => new DrizzleEventLog(db),
     },
   ],
+  exports: [EVENT_LOG_READER],
 })
 export class EventsModule {}

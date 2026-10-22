@@ -1,0 +1,1 @@
+CREATE INDEX "project_events_project_ids_index" ON "project_events" USING gin ("project_ids");

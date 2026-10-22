@@ -77,3 +77,8 @@ export class SplitResponse {
   @ApiProperty({ type: [ProjectResponse] })
   readonly successors: readonly ProjectResponse[];
 }
+
+export class ProjectListResponse {
+  @ApiProperty({ type: [ProjectResponse] })
+  readonly data: readonly ProjectResponse[];
+}

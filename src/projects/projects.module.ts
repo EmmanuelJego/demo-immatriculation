@@ -1,9 +1,12 @@
 import { Module } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { DATABASE, type Database } from '../database/database.module.js';
+import { EventsModule } from '../events/events.module.js';
 import { ProjectsController } from './api/projects.controller.js';
 import { AttachSourceKey } from './application/attach-source-key.js';
+import { FindProjects } from './application/find-projects.js';
 import { GetProject } from './application/get-project.js';
+import { ListProjectEvents } from './application/list-project-events.js';
 import { MergeProjects } from './application/merge-projects.js';
 import { SplitProject } from './application/split-project.js';
 import {
@@ -16,6 +19,7 @@ import { generateProjectId } from './domain/project-id.js';
 import { DrizzleUnitOfWork } from './infrastructure/drizzle-unit-of-work.js';
 
 @Module({
+  imports: [EventsModule],
   controllers: [ProjectsController],
   providers: [
     RegisterProject,
@@ -23,6 +27,8 @@ import { DrizzleUnitOfWork } from './infrastructure/drizzle-unit-of-work.js';
     AttachSourceKey,
     MergeProjects,
     SplitProject,
+    ListProjectEvents,
+    FindProjects,
     {
       provide: UNIT_OF_WORK,
       inject: [DATABASE],

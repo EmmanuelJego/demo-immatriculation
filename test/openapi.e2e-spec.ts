@@ -207,6 +207,56 @@ describe('OpenAPI specification', () => {
     });
   });
 
+  it('documents the history of a project, its cursor and its problems', async () => {
+    const { body } = await request(app.getHttpServer()).get(OPENAPI_JSON_PATH);
+    const operation = body.paths['/v1/projects/{id}/events'].get;
+
+    const parameterNames = operation.parameters.map(
+      ({ name }: { name: string }) => name,
+    );
+    expect(parameterNames.sort()).toEqual(['after', 'id', 'limit']);
+    expect(Object.keys(operation.responses).sort()).toEqual([
+      '200',
+      '400',
+      '404',
+    ]);
+    expect(
+      operation.responses['200'].content['application/json'].schema,
+    ).toEqual({ $ref: '#/components/schemas/EventPageResponse' });
+    for (const status of ['400', '404']) {
+      expect(
+        operation.responses[status].content['application/problem+json'].schema,
+      ).toEqual({ $ref: PROBLEM_DETAILS_SCHEMA });
+    }
+  });
+
+  it('documents the search by source key and its validation problem', async () => {
+    const { body } = await request(app.getHttpServer()).get(OPENAPI_JSON_PATH);
+    const operation = body.paths['/v1/projects'].get;
+
+    const parameters = operation.parameters.map(
+      ({ name, in: location, required }: Record<string, unknown>) => ({
+        name,
+        location,
+        required,
+      }),
+    );
+    expect(parameters).toEqual(
+      expect.arrayContaining([
+        { name: 'system', location: 'query', required: true },
+        { name: 'externalId', location: 'query', required: true },
+      ]),
+    );
+    expect(parameters).toHaveLength(2);
+    expect(Object.keys(operation.responses).sort()).toEqual(['200', '400']);
+    expect(
+      operation.responses['200'].content['application/json'].schema,
+    ).toEqual({ $ref: '#/components/schemas/ProjectListResponse' });
+    expect(
+      operation.responses['400'].content['application/problem+json'].schema,
+    ).toEqual({ $ref: PROBLEM_DETAILS_SCHEMA });
+  });
+
   it('serves the interactive documentation on /docs', async () => {
     const response = await request(app.getHttpServer()).get('/docs');
 

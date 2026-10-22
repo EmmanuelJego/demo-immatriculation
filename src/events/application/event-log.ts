@@ -9,6 +9,11 @@ export interface EventLog {
   append(event: NewEvent): Promise<EventLogEntry>;
 }
 
+// Without a project id, the whole log.
+export interface EventFilter {
+  readonly projectId?: string;
+}
+
 export interface EventLogReader {
-  list(query: PageQuery): Promise<Page<EventLogEntry>>;
+  list(query: PageQuery, filter?: EventFilter): Promise<Page<EventLogEntry>>;
 }

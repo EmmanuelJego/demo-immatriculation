@@ -33,6 +33,14 @@ export class DrizzleProjectRepository implements ProjectRepository {
     );
   }
 
+  findBySourceKey(key: SourceKey): Promise<Project | null> {
+    const owner = this.db
+      .select({ id: sourceKeys.projectId })
+      .from(sourceKeys)
+      .where(isSourceKey(key));
+    return this.findOne(inArray(projects.id, owner));
+  }
+
   findSourceKeyOrigin(key: SourceKey): Promise<Project | null> {
     const origin = this.db
       .select({ id: sourceKeys.originProjectId })

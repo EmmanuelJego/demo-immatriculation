@@ -15,6 +15,8 @@ export interface ProjectRepository {
   findById(id: ProjectId): Promise<Project | null>;
   // In the order of `ids`, unknown ids left out.
   findManyById(ids: readonly ProjectId[]): Promise<Project[]>;
+  // The project the key is attached to now.
+  findBySourceKey(key: SourceKey): Promise<Project | null>;
   // The project the key was first attached to, whichever project owns it now.
   findSourceKeyOrigin(key: SourceKey): Promise<Project | null>;
   // Locks the project until the end of the transaction, so that concurrent

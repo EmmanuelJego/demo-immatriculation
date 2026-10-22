@@ -57,6 +57,13 @@
       "when": 1792652529532,
       "tag": "0007_project_splits",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792655034812,
+      "tag": "0008_project_events_by_project",
+      "breakpoints": true
     }
   ]
 }

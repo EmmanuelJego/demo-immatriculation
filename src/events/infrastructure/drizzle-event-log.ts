@@ -1,4 +1,4 @@
-import { asc, gt, sql } from 'drizzle-orm';
+import { and, arrayContains, asc, gt, sql } from 'drizzle-orm';
 import {
   toPage,
   type Page,
@@ -6,7 +6,11 @@ import {
 } from '../../common/pagination/page.js';
 import type { DatabaseExecutor } from '../../database/database.module.js';
 import { projectEvents } from '../../database/schema.js';
-import type { EventLog, EventLogReader } from '../application/event-log.js';
+import type {
+  EventFilter,
+  EventLog,
+  EventLogReader,
+} from '../application/event-log.js';
 import type { EventLogEntry, NewEvent } from '../domain/event.js';
 
 // Appends are serialized until commit: otherwise a transaction holding a lower
@@ -27,11 +31,21 @@ export class DrizzleEventLog implements EventLog, EventLogReader {
     return row;
   }
 
-  async list(query: PageQuery): Promise<Page<EventLogEntry>> {
+  async list(
+    query: PageQuery,
+    filter: EventFilter = {},
+  ): Promise<Page<EventLogEntry>> {
     const rows = await this.db
       .select()
       .from(projectEvents)
-      .where(gt(projectEvents.sequence, query.after))
+      .where(
+        and(
+          gt(projectEvents.sequence, query.after),
+          filter.projectId === undefined
+            ? undefined
+            : arrayContains(projectEvents.projectIds, [filter.projectId]),
+        ),
+      )
       .orderBy(asc(projectEvents.sequence))
       .limit(query.limit + 1);
     return toPage(rows, query, (entry) => entry.sequence);

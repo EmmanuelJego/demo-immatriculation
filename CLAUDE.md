@@ -112,6 +112,8 @@ Ces règles sont la spécification. Chacune doit être couverte par au moins un 
 - Le journal est **append-only** : jamais d'`UPDATE` ni de `DELETE`. C'est garanti en base, par un trigger, et pas seulement dans le code.
 - Chaque événement porte un numéro de séquence global croissant (`sequence`), sa date (`occurredAt`), son type,
   les identifiants des projets concernés et un `payload` décrivant l'action.
+- Le journal d'un projet regroupe les événements dont `projectIds` le contient (index GIN) : un projet absorbé y
+  garde la fusion, un projet issu commence par la scission.
 - Un rejeu idempotent n'écrit **aucun** événement.
 
 **Concurrence**
@@ -126,11 +128,11 @@ Cette liste est indicative. Le contrat de référence est la spec OpenAPI géné
 | ------- | --------------------------------------------- | -------------------------------------------------- | ---------------------------- |
 | POST    | `/v1/projects`                                | Immatriculer un projet                             | `201` + `Location`, rejeu `200` |
 | GET     | `/v1/projects/{id}`                           | Consulter un projet (quel que soit son statut)     | `200`                        |
-| GET     | `/v1/projects?system=…&externalId=…`          | Retrouver un projet par clé source (liste paginée) | `200`                        |
+| GET     | `/v1/projects?system=…&externalId=…`          | Retrouver le propriétaire actuel d'une clé source  | `200` (`data` : 0 ou 1)      |
 | POST    | `/v1/projects/{id}/source-keys`               | Rattacher une clé source                           | `201`, rejeu `200`           |
 | POST    | `/v1/projects/{id}/merges`                    | Absorber des projets dans `{id}`                   | `200`, rejeu `200`           |
 | POST    | `/v1/projects/{id}/splits`                    | Scinder `{id}`                                     | `201`, rejeu `200`           |
-| GET     | `/v1/projects/{id}/events`                    | Journal d'un projet                                | `200`                        |
+| GET     | `/v1/projects/{id}/events`                    | Journal d'un projet, pagination par curseur        | `200`                        |
 | GET     | `/v1/events?after={sequence}&limit=…`         | Journal global, pagination par curseur             | `200`                        |
 
 Hors périmètre : authentification, modification des attributs d'un projet, détachement d'une clé source,
