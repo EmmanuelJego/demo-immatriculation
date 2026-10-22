@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { DATABASE, type Database } from '../database/database.module.js';
 import { ProjectsController } from './api/projects.controller.js';
+import { AttachSourceKey } from './application/attach-source-key.js';
 import { GetProject } from './application/get-project.js';
 import {
   PROJECT_ID_GENERATOR,
@@ -17,6 +18,7 @@ import { DrizzleUnitOfWork } from './infrastructure/drizzle-unit-of-work.js';
   providers: [
     RegisterProject,
     GetProject,
+    AttachSourceKey,
     {
       provide: UNIT_OF_WORK,
       inject: [DATABASE],

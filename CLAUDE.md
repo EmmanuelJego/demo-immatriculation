@@ -194,12 +194,15 @@ src/
 - **Erreurs métier** : les classes étendent `DomainError` (`src/common/errors/`) avec un `code` (qui donne le `type`
   Problem Details `urn:immatriculation:problem:<code>`) et un `kind` (`not-found` → 404, `conflict` → 409,
   `invalid` → 422).
-- **Concurrence** : un repository traduit les violations d'unicité PostgreSQL en erreurs de son contrat
-  (`DuplicateSourceKey`, `DuplicateProjectId`), et le use case rejoue alors l'unit of work entière (nombre de
-  tentatives borné). Les tests de concurrence sont déterministes (`test/support/concurrency.ts`) : une transaction
-  concurrente est tenue ouverte avec `deferred()`, et `waitForLockWait(db)` attend que la requête testée soit
-  réellement bloquée derrière elle (`pg_stat_activity`) avant de la relâcher, dans un `finally`. Jamais de
-  `Promise.all` en espérant une course, ni d'attente fixe (`setTimeout`).
+- **Concurrence** :
+  - une commande sur un projet existant le charge par `projects.findByIdForUpdate(id)`, qui le verrouille jusqu'au commit ;
+  - un repository traduit les violations d'unicité PostgreSQL en erreurs de son contrat (`DuplicateSourceKey`,
+    `DuplicateProjectId`), et le use case enveloppe son unit of work dans `retryOnDuplicate(() => …)`
+    (`src/projects/application/retry.ts`), qui la rejoue entière, un nombre borné de fois ;
+  - les tests de concurrence sont déterministes (`test/support/concurrency.ts`) : `contendWith(db, holder, contender)`
+    tient la transaction `holder` ouverte jusqu'à ce que `contender` soit réellement bloqué derrière elle
+    (`waitForLockWait`, via `pg_stat_activity`), puis la commite. Jamais de `Promise.all` en espérant une course, ni
+    d'attente fixe (`setTimeout`).
 - **Lister** : `CursorPageQuery` en `@Query()`, lecture de `limit + 1` lignes puis `toPage()` (`src/common/pagination/`),
   réponse `{ data, pagination: { after, limit, nextAfter } }`.
 

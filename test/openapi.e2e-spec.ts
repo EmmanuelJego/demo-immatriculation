@@ -82,6 +82,35 @@ describe('OpenAPI specification', () => {
     ).toEqual({ $ref: PROBLEM_DETAILS_SCHEMA });
   });
 
+  it('documents the source key attachment, its replay and its problems', async () => {
+    const { body } = await request(app.getHttpServer()).get(OPENAPI_JSON_PATH);
+    const operation = body.paths['/v1/projects/{id}/source-keys'].post;
+
+    expect(operation.requestBody.content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/SourceKeyRequest',
+    });
+    expect(Object.keys(operation.responses).sort()).toEqual([
+      '200',
+      '201',
+      '400',
+      '404',
+      '409',
+    ]);
+    for (const status of ['200', '201']) {
+      expect(
+        operation.responses[status].content['application/json'].schema,
+      ).toEqual({ $ref: '#/components/schemas/ProjectResponse' });
+      expect(operation.responses[status].headers).toHaveProperty(
+        'Content-Location',
+      );
+    }
+    for (const status of ['400', '404', '409']) {
+      expect(
+        operation.responses[status].content['application/problem+json'].schema,
+      ).toEqual({ $ref: PROBLEM_DETAILS_SCHEMA });
+    }
+  });
+
   it('serves the interactive documentation on /docs', async () => {
     const response = await request(app.getHttpServer()).get('/docs');
 

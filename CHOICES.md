@@ -45,6 +45,23 @@ puisque les attributs du survivant diffèrent. C'est à revoir avec la fusion.
 
 `GET /v1/projects/{id}` répond `404` à un id qui n'a pas le format `PRJ-XXXX-XXXX` : aucun projet ne peut le porter.
 
+## Rattachement : le projet en réponse, sans `Location`
+
+`POST /v1/projects/{id}/source-keys` renvoie le projet complet avec `Content-Location: /v1/projects/{id}`, plutôt
+qu'une ressource « clé source » : aucune route ne permet de consulter une clé seule, donc un `Location` vers elle
+n'aurait pas de cible.
+
+En production : selon les besoins des partenaires, une ressource `GET /v1/source-keys/{system}/{externalId}` (qui
+résout une clé vers son projet) pourrait devenir la cible naturelle du `Location`.
+
+## Concurrence : nombre de tentatives borné
+
+Une commande qui perd une course sur une contrainte d'unicité est rejouée, trois fois au plus. Au-delà, elle échoue
+en `500` générique. Il faudrait trois courses perdues d'affilée sur la même clé, ce qui n'arrive pas au volume d'un
+registre.
+
+En production : renvoyer un `409` ou un `503` avec `Retry-After`, pour que le client sache qu'il peut réessayer.
+
 ## Modèle de projet minimal
 
 Un projet a seulement un `label` et un `ownerSiren`.

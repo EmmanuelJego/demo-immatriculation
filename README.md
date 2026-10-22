@@ -7,6 +7,12 @@ Projet de démonstration joint à ma candidature pour la mission freelance beta.
 L'objectif n'est pas de reproduire le produit mais de montrer, sur un périmètre réduit, comment je structure
 une API de ce type : modélisation métier, contrats d'interface, tests, et travail avec un agent de code.
 
+Divers skills sont installés pour donner des instructions aux agents de code.  
+Certains de ces skills apportent des décisions techniques, dont certaines que je ne prétend pas maîtriser aujourd'hui, 
+telle que l'architecture héxagonale. L'idée ici est de démontrer la **méthode** que j'utilise pour initialiser un 
+nouveau projet. Dans un contexte réel, j'adapterai les skills à des compétences que je métrise, ou je me formerais 
+aux technologies et architectures définies.
+
 ## Périmètre
 
 Un registre qui attribue à chaque projet de collectivité un **identifiant unique et pérenne**, et une API REST
@@ -24,12 +30,6 @@ en cas de modification de l'état de l'application entre temps.
 ## Stack
 
 NestJS · TypeScript (ESM) · PostgreSQL · Drizzle · OpenAPI (`@nestjs/swagger`) · Vitest · Supertest · oxlint
-
-Divers skills sont installés pour donner des instructions aux agents de code.  
-Certains de ces skills apportent des décisions techniques, dont certaines que je ne prétend pas maîtriser, telle 
-que l'architecture héxagonale. L'idée ici est de démontrer la **méthode** que j'utilise pour initialiser un 
-nouveau projet. Dans un contexte réel, j'adapterai les skills à des compétences que je métrise, ou je me formerais 
-aux technologies et architectures définies.
 
 ## Comment ce dépôt est construit
 

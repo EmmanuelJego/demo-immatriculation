@@ -24,13 +24,35 @@ export class DrizzleProjectRepository implements ProjectRepository {
     const owner = this.db
       .select({ id: sourceKeys.projectId })
       .from(sourceKeys)
-      .where(
-        and(
-          eq(sourceKeys.system, key.system),
-          eq(sourceKeys.externalId, key.externalId),
-        ),
-      );
+      .where(isSourceKey(key));
     return this.findOne(inArray(projects.id, owner));
+  }
+
+  // The lock is taken on the project row alone: PostgreSQL cannot lock the
+  // nullable side of the outer join that loads its source keys.
+  async findByIdForUpdate(id: ProjectId): Promise<Project | null> {
+    const [locked] = await this.db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.id, id))
+      .for('update');
+    return locked ? this.findById(id) : null;
+  }
+
+  async findSourceKeyOwner(key: SourceKey): Promise<ProjectId | null> {
+    const [row] = await this.db
+      .select({ projectId: sourceKeys.projectId })
+      .from(sourceKeys)
+      .where(isSourceKey(key));
+    return row?.projectId ?? null;
+  }
+
+  async attachSourceKey(projectId: ProjectId, key: SourceKey): Promise<void> {
+    try {
+      await this.db.insert(sourceKeys).values({ ...key, projectId });
+    } catch (error) {
+      throw toDuplicateError(error) ?? error;
+    }
   }
 
   private async findOne(condition: SQL): Promise<Project | null> {
@@ -76,6 +98,13 @@ export class DrizzleProjectRepository implements ProjectRepository {
       throw toDuplicateError(error) ?? error;
     }
   }
+}
+
+function isSourceKey(key: SourceKey): SQL | undefined {
+  return and(
+    eq(sourceKeys.system, key.system),
+    eq(sourceKeys.externalId, key.externalId),
+  );
 }
 
 function toDuplicateError(error: unknown): Error | null {

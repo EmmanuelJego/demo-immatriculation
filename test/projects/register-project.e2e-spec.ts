@@ -3,8 +3,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { DATABASE } from '../../src/database/database.module.js';
 import { registerProject } from '../../src/projects/domain/project.js';
-import { DrizzleUnitOfWork } from '../../src/projects/infrastructure/drizzle-unit-of-work.js';
-import { deferred, waitForLockWait } from '../support/concurrency.js';
+import { contendWith } from '../support/concurrency.js';
 import { createTestApp, resetDatabase } from '../support/test-app.js';
 import { EVENTS_PATH } from '../support/events.js';
 import {
@@ -144,36 +143,19 @@ describe('POST /v1/projects', () => {
   describe('when a concurrent registration of the same source key commits first', () => {
     const concurrentId = 'PRJ-AAAA-AAAA';
 
-    // Holds the concurrent registration open until the HTTP request is blocked
-    // behind it on the source key, then commits it.
-    async function registerConcurrentlyThenPost(
+    function registerConcurrentlyThenPost(
       concurrent: Registration,
       posted: Registration,
     ): Promise<request.Response> {
-      const inserted = deferred();
-      const commit = deferred();
-      const concurrentRegistration = new DrizzleUnitOfWork(
+      return contendWith(
         app.get(DATABASE),
-      ).run(async ({ projects, events }) => {
-        const registered = registerProject(concurrent, concurrentId);
-        await projects.insert(registered.project);
-        await events.append(registered.event);
-        inserted.resolve();
-        await commit.promise;
-      });
-      await inserted.promise;
-
-      const post = request(app.getHttpServer())
-        .post(PROJECTS_PATH)
-        .send(posted)
-        .then((response) => response);
-      try {
-        await waitForLockWait(app.get(DATABASE));
-      } finally {
-        commit.resolve();
-        await concurrentRegistration;
-      }
-      return post;
+        async ({ projects, events }) => {
+          const registered = registerProject(concurrent, concurrentId);
+          await projects.insert(registered.project);
+          await events.append(registered.event);
+        },
+        () => request(app.getHttpServer()).post(PROJECTS_PATH).send(posted),
+      );
     }
 
     it('returns the concurrently registered project for the same attributes', async () => {

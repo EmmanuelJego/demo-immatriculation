@@ -1,7 +1,10 @@
 import { sql } from 'drizzle-orm';
 import type { Database } from '../../src/database/database.module.js';
+import type { RegistryTransaction } from '../../src/projects/application/unit-of-work.js';
+import { DrizzleUnitOfWork } from '../../src/projects/infrastructure/drizzle-unit-of-work.js';
 
-const LOCK_WAIT_TIMEOUT_MS = 5_000;
+// Below the Vitest test timeout (5 s), so that this error is the one reported.
+const LOCK_WAIT_TIMEOUT_MS = 2_000;
 const LOCK_WAIT_POLL_MS = 20;
 
 export interface Deferred {
@@ -36,4 +39,35 @@ export async function waitForLockWait(db: Database): Promise<void> {
   throw new Error(
     `No connection waited for a lock within ${LOCK_WAIT_TIMEOUT_MS} ms`,
   );
+}
+
+// Runs `holder` in a transaction kept open until `contender` is blocked
+// behind it on a lock, then commits it and returns what `contender` returned.
+export async function contendWith<T>(
+  db: Database,
+  holder: (tx: RegistryTransaction) => Promise<void>,
+  contender: () => PromiseLike<T>,
+): Promise<T> {
+  const held = deferred();
+  const commit = deferred();
+  const holding = new DrizzleUnitOfWork(db).run(async (tx) => {
+    await holder(tx);
+    held.resolve();
+    await commit.promise;
+  });
+  // Fails fast, instead of waiting forever, when the holder itself fails.
+  await Promise.race([held.promise, holding]);
+
+  const contending = Promise.resolve(contender());
+  try {
+    await waitForLockWait(db);
+  } catch (error) {
+    // The contender is abandoned: keep its eventual failure from going unhandled.
+    contending.catch(() => {});
+    throw error;
+  } finally {
+    commit.resolve();
+    await holding;
+  }
+  return contending;
 }

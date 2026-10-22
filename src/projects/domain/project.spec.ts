@@ -1,5 +1,10 @@
-import { SourceKeyAlreadyRegistered } from './errors.js';
 import {
+  ProjectNotActive,
+  SourceKeyAlreadyRegistered,
+  SourceKeyOwnedByAnotherProject,
+} from './errors.js';
+import {
+  attachSourceKey,
   registerProject,
   resolveRegistration,
   type Project,
@@ -12,6 +17,13 @@ const REGISTRATION: Registration = {
   ownerSiren: '213105554',
   sourceKey: { system: 'dotations', externalId: 'DOS-2026-0001' },
 };
+
+const REGISTERED_PROJECT: Project = {
+  ...registerProject(REGISTRATION, PROJECT_ID).project,
+  createdAt: new Date('2026-10-21T17:00:00.000Z'),
+};
+const NEW_SOURCE_KEY = { system: 'guichet-unique', externalId: 'GU-42' };
+const OTHER_PROJECT_ID = 'PRJ-AB12-CD34';
 
 describe('registerProject', () => {
   it('creates an active project that carries its initial source key', () => {
@@ -38,10 +50,7 @@ describe('registerProject', () => {
 });
 
 describe('resolveRegistration', () => {
-  const existing: Project = {
-    ...registerProject(REGISTRATION, PROJECT_ID).project,
-    createdAt: new Date('2026-10-21T17:00:00.000Z'),
-  };
+  const existing = REGISTERED_PROJECT;
 
   it('treats a registration with the same attributes as a replay of the existing project', () => {
     expect(resolveRegistration(existing, { ...REGISTRATION })).toBe(existing);
@@ -58,4 +67,65 @@ describe('resolveRegistration', () => {
       ).toThrow(SourceKeyAlreadyRegistered);
     },
   );
+});
+
+describe('attachSourceKey', () => {
+  it('adds the key to an active project and describes it in a SourceKeyAttached event', () => {
+    const attachment = attachSourceKey(
+      REGISTERED_PROJECT,
+      NEW_SOURCE_KEY,
+      null,
+    );
+
+    expect(attachment).toEqual({
+      project: {
+        ...REGISTERED_PROJECT,
+        sourceKeys: [...REGISTERED_PROJECT.sourceKeys, NEW_SOURCE_KEY],
+      },
+      event: {
+        type: 'SourceKeyAttached',
+        projectIds: [PROJECT_ID],
+        payload: { sourceKey: NEW_SOURCE_KEY },
+      },
+    });
+  });
+
+  it('changes nothing when the key is already attached to the project', () => {
+    const attachment = attachSourceKey(
+      REGISTERED_PROJECT,
+      REGISTRATION.sourceKey,
+      PROJECT_ID,
+    );
+
+    expect(attachment).toEqual({ project: REGISTERED_PROJECT, event: null });
+  });
+
+  it('rejects a key that belongs to another project', () => {
+    expect(() =>
+      attachSourceKey(REGISTERED_PROJECT, NEW_SOURCE_KEY, OTHER_PROJECT_ID),
+    ).toThrow(SourceKeyOwnedByAnotherProject);
+  });
+
+  it.each(['MERGED', 'SPLIT'] as const)(
+    'rejects any attachment to a %s project',
+    (status) => {
+      expect(() =>
+        attachSourceKey(
+          { ...REGISTERED_PROJECT, status },
+          NEW_SOURCE_KEY,
+          null,
+        ),
+      ).toThrow(ProjectNotActive);
+    },
+  );
+
+  it('reports a closed project before a key owned elsewhere', () => {
+    expect(() =>
+      attachSourceKey(
+        { ...REGISTERED_PROJECT, status: 'MERGED' },
+        NEW_SOURCE_KEY,
+        OTHER_PROJECT_ID,
+      ),
+    ).toThrow(ProjectNotActive);
+  });
 });

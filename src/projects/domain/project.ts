@@ -1,5 +1,9 @@
 import type { NewEvent } from '../../events/domain/event.js';
-import { SourceKeyAlreadyRegistered } from './errors.js';
+import {
+  ProjectNotActive,
+  SourceKeyAlreadyRegistered,
+  SourceKeyOwnedByAnotherProject,
+} from './errors.js';
 import type { ProjectId } from './project-id.js';
 
 export const PROJECT_STATUSES = ['ACTIVE', 'MERGED', 'SPLIT'] as const;
@@ -74,4 +78,46 @@ export function resolveRegistration(
     throw new SourceKeyAlreadyRegistered(registration.sourceKey, existing.id);
   }
   return existing;
+}
+
+export interface SourceKeyAttached extends NewEvent {
+  readonly type: 'SourceKeyAttached';
+  readonly projectIds: readonly [ProjectId];
+  readonly payload: { readonly sourceKey: SourceKey };
+}
+
+// `event` is null when nothing changed: the key was already attached.
+export interface Attachment {
+  readonly project: Project;
+  readonly event: SourceKeyAttached | null;
+}
+
+export function attachSourceKey(
+  project: Project,
+  key: SourceKey,
+  currentOwner: ProjectId | null,
+): Attachment {
+  assertActive(project);
+  if (currentOwner === project.id) {
+    return { project, event: null };
+  }
+  if (currentOwner !== null) {
+    throw new SourceKeyOwnedByAnotherProject(key, currentOwner);
+  }
+  const sourceKey = { system: key.system, externalId: key.externalId };
+  return {
+    project: { ...project, sourceKeys: [...project.sourceKeys, sourceKey] },
+    event: {
+      type: 'SourceKeyAttached',
+      projectIds: [project.id],
+      payload: { sourceKey },
+    },
+  };
+}
+
+// Merged and split projects are kept for the record, but are closed.
+function assertActive(project: Project): void {
+  if (project.status !== 'ACTIVE') {
+    throw new ProjectNotActive(project.id, project.status);
+  }
 }
