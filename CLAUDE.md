@@ -31,6 +31,7 @@ décorée s'importe avec `import type` (ou `type` inline), sinon `tsc` refuse (`
   `resetDatabase` refuse de vider une base dont le nom ne finit pas par `_test`.
 - Helpers e2e dans `test/support/` : `createTestApp()` construit l'application avec `configureApp`, le même
   pipeline HTTP qu'en prod (versioning, validation, OpenAPI). `resetDatabase(app)` vide toutes les tables.
+  `registerProject(app, registration?)` et `eventLog(app)` préparent et observent l'état via l'API.
 
 ## Notions métier
 
@@ -72,16 +73,21 @@ Ces règles sont la spécification. Chacune doit être couverte par au moins un 
 - Un projet `ACTIVE` possède toujours au moins une clé source.
 - Rattacher une clé source déjà rattachée au même projet ne change rien (rejeu). La rattacher alors qu'elle appartient
   à un autre projet est un conflit (`409`).
+- Une clé source garde son **projet d'origine**, celui auquel elle a été rattachée en premier, même quand une fusion
+  la transfère au survivant.
 
 **Immatriculation (création)**
 - La création exige une clé source initiale, qui sert de clé naturelle d'idempotence.
-- Si la clé source existe déjà avec les mêmes attributs : on renvoie le projet existant (`200`), sans nouvel événement.
+- Si la clé source existe déjà et que son projet d'origine a les mêmes attributs : on renvoie ce projet (`200`), sans
+  nouvel événement, même s'il a été fusionné depuis.
 - Si elle existe déjà avec des attributs différents : `409`.
 
 **Fusion (par absorption)**
 - Entrée : un survivant `S` (dans l'URL) et une liste non vide de projets absorbés `A`. `S ∉ A`, sinon `422`.
+  Un projet de `A` inexistant : `422`.
 - `S` et les projets de `A` à traiter doivent être `ACTIVE`.
 - Effet : chaque projet absorbé passe à `MERGED`, porte `mergedInto = S`, et ses clés sources sont transférées à `S`.
+  Un projet est `MERGED` si et seulement s'il porte `mergedInto` (`CHECK` en base).
 - Idempotence : les projets de `A` déjà fusionnés dans `S` sont ignorés. S'il n'en reste aucun, on renvoie `S`
   sans nouvel événement. Si un projet de `A` est fusionné ailleurs ou scindé : `409`.
 - Consulter un projet absorbé renvoie `200` avec `status: MERGED` et `mergedInto` : c'est la **redirection**.
@@ -118,7 +124,7 @@ Cette liste est indicative. Le contrat de référence est la spec OpenAPI géné
 | GET     | `/v1/projects/{id}`                           | Consulter un projet (quel que soit son statut)     | `200`                        |
 | GET     | `/v1/projects?system=…&externalId=…`          | Retrouver un projet par clé source (liste paginée) | `200`                        |
 | POST    | `/v1/projects/{id}/source-keys`               | Rattacher une clé source                           | `201`, rejeu `200`           |
-| POST    | `/v1/projects/{id}/merges`                    | Absorber des projets dans `{id}`                   | `200`                        |
+| POST    | `/v1/projects/{id}/merges`                    | Absorber des projets dans `{id}`                   | `200`, rejeu `200`           |
 | POST    | `/v1/projects/{id}/splits`                    | Scinder `{id}`                                     | `201`, rejeu `200`           |
 | GET     | `/v1/projects/{id}/events`                    | Journal d'un projet                                | `200`                        |
 | GET     | `/v1/events?after={sequence}&limit=…`         | Journal global, pagination par curseur             | `200`                        |
@@ -196,12 +202,15 @@ src/
   `invalid` → 422).
 - **Concurrence** :
   - une commande sur un projet existant le charge par `projects.findByIdForUpdate(id)`, qui le verrouille jusqu'au commit ;
+    une commande sur plusieurs projets les charge **en une fois** par `projects.findManyByIdForUpdate(ids)`, qui les
+    verrouille dans l'ordre croissant des ids, quel que soit l'ordre demandé ;
   - un repository traduit les violations d'unicité PostgreSQL en erreurs de son contrat (`DuplicateSourceKey`,
     `DuplicateProjectId`), et le use case enveloppe son unit of work dans `retryOnDuplicate(() => …)`
     (`src/projects/application/retry.ts`), qui la rejoue entière, un nombre borné de fois ;
   - les tests de concurrence sont déterministes (`test/support/concurrency.ts`) : `contendWith(db, holder, contender)`
     tient la transaction `holder` ouverte jusqu'à ce que `contender` soit réellement bloqué derrière elle
-    (`waitForLockWait`, via `pg_stat_activity`), puis la commite. Jamais de `Promise.all` en espérant une course, ni
+    (`waitForLockWait`, via `pg_stat_activity`), puis la commite. Un 4ᵉ argument optionnel, `whileBlocked`, observe
+    l'état pendant l'attente (par exemple les verrous déjà pris). Jamais de `Promise.all` en espérant une course, ni
     d'attente fixe (`setTimeout`).
 - **Lister** : `CursorPageQuery` en `@Query()`, lecture de `limit + 1` lignes puis `toPage()` (`src/common/pagination/`),
   réponse `{ data, pagination: { after, limit, nextAfter } }`.
@@ -241,7 +250,8 @@ Suivre les skills `api-and-interface-design` et `nestjs-best-practices`.
   - `400` : requête mal formée ou invalide (schéma).
   - `404` : ressource inconnue.
   - `409` : conflit avec l'état du registre (projet non `ACTIVE`, clé source déjà rattachée ailleurs, rejeu divergent).
-  - `422` : requête bien formée mais incohérente en elle-même (survivant parmi les absorbés, clé source non répartie).
+  - `422` : requête bien formée mais impossible à traiter : incohérente en elle-même (survivant parmi les absorbés,
+    clé source non répartie), ou désignant dans son corps un projet qui n'existe pas.
 - **Champs texte** : en plus de leurs bornes, ils refusent U+0000, que PostgreSQL ne sait pas stocker (sinon `500`).
 - **Pagination** des listes par curseur (`after`, `limit`, avec un plafond).
 - Dates en ISO 8601 UTC. Champs JSON en camelCase.

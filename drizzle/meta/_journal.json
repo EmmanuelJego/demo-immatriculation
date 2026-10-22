@@ -36,6 +36,20 @@
       "when": 1792621073286,
       "tag": "0004_projects",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792650774026,
+      "tag": "0005_project_merges",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792651143928,
+      "tag": "0006_project_merges_not_into_itself",
+      "breakpoints": true
     }
   ]
 }

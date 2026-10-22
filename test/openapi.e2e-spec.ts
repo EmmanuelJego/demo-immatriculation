@@ -111,6 +111,53 @@ describe('OpenAPI specification', () => {
     }
   });
 
+  it('documents the merge, its absorbed list and its problems', async () => {
+    const { body } = await request(app.getHttpServer()).get(OPENAPI_JSON_PATH);
+    const operation = body.paths['/v1/projects/{id}/merges'].post;
+    const absorbed =
+      body.components.schemas.MergeProjectsRequest.properties.absorbed;
+
+    expect(operation.requestBody.content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/MergeProjectsRequest',
+    });
+    expect(absorbed).toMatchObject({
+      type: 'array',
+      minItems: 1,
+      maxItems: 100,
+      uniqueItems: true,
+    });
+    expect(new RegExp(absorbed.items.pattern).test('PRJ-7KQ2-M9XD')).toBe(true);
+    expect(Object.keys(operation.responses).sort()).toEqual([
+      '200',
+      '400',
+      '404',
+      '409',
+      '422',
+    ]);
+    expect(
+      operation.responses['200'].content['application/json'].schema,
+    ).toEqual({ $ref: '#/components/schemas/ProjectResponse' });
+    expect(operation.responses['200'].headers).toHaveProperty(
+      'Content-Location',
+    );
+    for (const status of ['400', '404', '409', '422']) {
+      expect(
+        operation.responses[status].content['application/problem+json'].schema,
+      ).toEqual({ $ref: PROBLEM_DETAILS_SCHEMA });
+    }
+  });
+
+  it('documents the link of a merged project to its survivor', async () => {
+    const { body } = await request(app.getHttpServer()).get(OPENAPI_JSON_PATH);
+    const project = body.components.schemas.ProjectResponse;
+
+    expect(project.required).toContain('mergedInto');
+    expect(project.properties.mergedInto).toMatchObject({
+      type: 'string',
+      nullable: true,
+    });
+  });
+
   it('serves the interactive documentation on /docs', async () => {
     const response = await request(app.getHttpServer()).get('/docs');
 

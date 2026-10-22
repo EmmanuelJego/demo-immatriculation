@@ -1,3 +1,7 @@
+import type { INestApplication } from '@nestjs/common';
+import request from 'supertest';
+import type { App } from 'supertest/types.js';
+
 export const PROJECTS_PATH = '/v1/projects';
 
 // `PRJ-XXXX-XXXX` in Crockford Base32: digits and letters, without I, L, O, U.
@@ -29,3 +33,15 @@ export const ANOTHER_SOURCE_KEY = {
   system: 'guichet-unique',
   externalId: 'GU-42',
 };
+
+// Registers a project through the API and returns its body.
+export async function registerProject(
+  app: INestApplication<App>,
+  registration: Registration = aRegistration(),
+) {
+  const response = await request(app.getHttpServer())
+    .post(PROJECTS_PATH)
+    .send(registration);
+  expect(response.status).toBe(201);
+  return response.body;
+}

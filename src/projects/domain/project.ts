@@ -3,6 +3,7 @@ import {
   ProjectNotActive,
   SourceKeyAlreadyRegistered,
   SourceKeyOwnedByAnotherProject,
+  SurvivorAmongAbsorbed,
 } from './errors.js';
 import type { ProjectId } from './project-id.js';
 
@@ -27,6 +28,8 @@ export interface Project {
   readonly label: string;
   readonly ownerSiren: string;
   readonly status: ProjectStatus;
+  // The survivor that absorbed the project, once it is MERGED.
+  readonly mergedInto: ProjectId | null;
   readonly sourceKeys: readonly SourceKey[];
   readonly createdAt: Date;
 }
@@ -55,6 +58,7 @@ export function registerProject(
       label,
       ownerSiren,
       status: 'ACTIVE',
+      mergedInto: null,
       sourceKeys: [sourceKey],
     },
     event: {
@@ -111,6 +115,56 @@ export function attachSourceKey(
       type: 'SourceKeyAttached',
       projectIds: [project.id],
       payload: { sourceKey },
+    },
+  };
+}
+
+export interface ProjectsMerged extends NewEvent {
+  readonly type: 'ProjectsMerged';
+  readonly payload: {
+    readonly survivor: ProjectId;
+    readonly absorbed: readonly ProjectId[];
+    readonly transferredSourceKeys: readonly SourceKey[];
+  };
+}
+
+// `event` is null when nothing changed: every project was already absorbed.
+export interface Merger {
+  readonly absorbed: readonly Project[];
+  readonly event: ProjectsMerged | null;
+}
+
+export function mergeProjects(
+  survivor: Project,
+  candidates: readonly Project[],
+): Merger {
+  if (candidates.some(({ id }) => id === survivor.id)) {
+    throw new SurvivorAmongAbsorbed(survivor.id);
+  }
+  assertActive(survivor);
+  const absorbed = candidates.filter(
+    (project) => project.mergedInto !== survivor.id,
+  );
+  absorbed.forEach(assertActive);
+  if (absorbed.length === 0) {
+    return { absorbed: [], event: null };
+  }
+  const ids = absorbed.map(({ id }) => id);
+  return {
+    absorbed: absorbed.map((project) => ({
+      ...project,
+      status: 'MERGED',
+      mergedInto: survivor.id,
+      sourceKeys: [],
+    })),
+    event: {
+      type: 'ProjectsMerged',
+      projectIds: [survivor.id, ...ids],
+      payload: {
+        survivor: survivor.id,
+        absorbed: ids,
+        transferredSourceKeys: absorbed.flatMap(({ sourceKeys }) => sourceKeys),
+      },
     },
   };
 }

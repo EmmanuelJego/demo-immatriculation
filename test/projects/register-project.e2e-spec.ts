@@ -46,6 +46,7 @@ describe('POST /v1/projects', () => {
       label: registration.label,
       ownerSiren: registration.ownerSiren,
       status: 'ACTIVE',
+      mergedInto: null,
       sourceKeys: [registration.sourceKey],
       createdAt: expect.any(String),
     });

@@ -62,6 +62,8 @@ describe('POST /v1/projects, when the event cannot be recorded', () => {
 
     expect(response.status).toBe(500);
     const repository = new DrizzleProjectRepository(app.get(DATABASE));
-    expect(await repository.findBySourceKey(registration.sourceKey)).toBeNull();
+    expect(
+      await repository.findSourceKeyOrigin(registration.sourceKey),
+    ).toBeNull();
   });
 });

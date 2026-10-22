@@ -1,10 +1,12 @@
 import {
   ProjectNotActive,
   SourceKeyAlreadyRegistered,
+  SurvivorAmongAbsorbed,
   SourceKeyOwnedByAnotherProject,
 } from './errors.js';
 import {
   attachSourceKey,
+  mergeProjects,
   registerProject,
   resolveRegistration,
   type Project,
@@ -24,6 +26,7 @@ const REGISTERED_PROJECT: Project = {
 };
 const NEW_SOURCE_KEY = { system: 'guichet-unique', externalId: 'GU-42' };
 const OTHER_PROJECT_ID = 'PRJ-AB12-CD34';
+const ALREADY_ABSORBED_ID = 'PRJ-EF56-GH78';
 
 describe('registerProject', () => {
   it('creates an active project that carries its initial source key', () => {
@@ -34,6 +37,7 @@ describe('registerProject', () => {
       label: REGISTRATION.label,
       ownerSiren: REGISTRATION.ownerSiren,
       status: 'ACTIVE',
+      mergedInto: null,
       sourceKeys: [REGISTRATION.sourceKey],
     });
   });
@@ -127,5 +131,91 @@ describe('attachSourceKey', () => {
         OTHER_PROJECT_ID,
       ),
     ).toThrow(ProjectNotActive);
+  });
+});
+
+describe('mergeProjects', () => {
+  const survivor = REGISTERED_PROJECT;
+  const absorbed: Project = {
+    ...REGISTERED_PROJECT,
+    id: OTHER_PROJECT_ID,
+    sourceKeys: [NEW_SOURCE_KEY],
+  };
+
+  it('closes the absorbed projects and describes the merge in a ProjectsMerged event', () => {
+    const merger = mergeProjects(survivor, [absorbed]);
+
+    expect(merger).toEqual({
+      absorbed: [
+        {
+          ...absorbed,
+          status: 'MERGED',
+          mergedInto: PROJECT_ID,
+          sourceKeys: [],
+        },
+      ],
+      event: {
+        type: 'ProjectsMerged',
+        projectIds: [PROJECT_ID, OTHER_PROJECT_ID],
+        payload: {
+          survivor: PROJECT_ID,
+          absorbed: [OTHER_PROJECT_ID],
+          transferredSourceKeys: [NEW_SOURCE_KEY],
+        },
+      },
+    });
+  });
+
+  const alreadyAbsorbed: Project = {
+    ...REGISTERED_PROJECT,
+    id: ALREADY_ABSORBED_ID,
+    status: 'MERGED',
+    mergedInto: PROJECT_ID,
+    sourceKeys: [],
+  };
+
+  it('changes nothing when every project is already merged into the survivor', () => {
+    expect(mergeProjects(survivor, [alreadyAbsorbed])).toEqual({
+      absorbed: [],
+      event: null,
+    });
+  });
+
+  it('absorbs only the projects not yet merged into the survivor', () => {
+    const merger = mergeProjects(survivor, [alreadyAbsorbed, absorbed]);
+
+    expect(merger.absorbed.map(({ id }) => id)).toEqual([OTHER_PROJECT_ID]);
+    expect(merger.event?.payload.absorbed).toEqual([OTHER_PROJECT_ID]);
+  });
+
+  it.each(['MERGED', 'SPLIT'] as const)(
+    'rejects a merge into a %s survivor',
+    (status) => {
+      expect(() => mergeProjects({ ...survivor, status }, [absorbed])).toThrow(
+        ProjectNotActive,
+      );
+    },
+  );
+
+  it('rejects a project merged into another project', () => {
+    expect(() =>
+      mergeProjects(survivor, [
+        { ...alreadyAbsorbed, mergedInto: OTHER_PROJECT_ID },
+      ]),
+    ).toThrow(ProjectNotActive);
+  });
+
+  it('rejects a split project', () => {
+    expect(() =>
+      mergeProjects(survivor, [{ ...absorbed, status: 'SPLIT' }]),
+    ).toThrow(ProjectNotActive);
+  });
+
+  it('rejects a survivor among the absorbed projects, before checking any status', () => {
+    const closedSurvivor: Project = { ...survivor, status: 'MERGED' };
+
+    expect(() =>
+      mergeProjects(closedSurvivor, [absorbed, closedSurvivor]),
+    ).toThrow(SurvivorAmongAbsorbed);
   });
 });

@@ -29,6 +29,15 @@ export class ProjectResponse {
   @ApiProperty({ enum: PROJECT_STATUSES, example: 'ACTIVE' })
   readonly status: ProjectStatus;
 
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      'Survivor that absorbed the project, when it is MERGED: clients follow this link',
+    example: null,
+  })
+  readonly mergedInto: string | null;
+
   @ApiProperty({ type: [SourceKeyResponse] })
   readonly sourceKeys: readonly SourceKeyResponse[];
 
@@ -42,6 +51,7 @@ export function toProjectResponse(project: Project): ProjectResponse {
     label: project.label,
     ownerSiren: project.ownerSiren,
     status: project.status,
+    mergedInto: project.mergedInto,
     sourceKeys: project.sourceKeys.map(({ system, externalId }) => ({
       system,
       externalId,

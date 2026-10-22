@@ -3,6 +3,8 @@
 import {
   bigint,
   char,
+  check,
+  type AnyPgColumn,
   index,
   jsonb,
   pgEnum,
@@ -17,13 +19,25 @@ import { PROJECT_STATUSES } from '../projects/domain/project.js';
 
 export const projectStatus = pgEnum('project_status', PROJECT_STATUSES);
 
-export const projects = pgTable('projects', {
-  id: text().primaryKey(),
-  label: text().notNull(),
-  ownerSiren: char({ length: 9 }).notNull(),
-  status: projectStatus().notNull(),
-  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
+export const projects = pgTable(
+  'projects',
+  {
+    id: text().primaryKey(),
+    label: text().notNull(),
+    ownerSiren: char({ length: 9 }).notNull(),
+    status: projectStatus().notNull(),
+    mergedInto: text().references((): AnyPgColumn => projects.id),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // A project is MERGED exactly when it points to the survivor, which is
+    // another project.
+    check(
+      'projects_merged_into_check',
+      sql`(${table.status} = 'MERGED') = (${table.mergedInto} is not null) and ${table.mergedInto} <> ${table.id}`,
+    ),
+  ],
+);
 
 // The primary key enforces that a source key belongs to at most one project.
 export const sourceKeys = pgTable(
@@ -32,6 +46,11 @@ export const sourceKeys = pgTable(
     system: text().notNull(),
     externalId: text().notNull(),
     projectId: text()
+      .notNull()
+      .references(() => projects.id),
+    // The project the key was first attached to, kept when a merge transfers
+    // the key: it is the project a replayed registration refers to.
+    originProjectId: text()
       .notNull()
       .references(() => projects.id),
     attachedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),

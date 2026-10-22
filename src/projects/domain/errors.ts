@@ -41,3 +41,23 @@ export class ProjectNotActive extends DomainError {
     super(`Project ${id} is ${status} and no longer accepts changes`);
   }
 }
+
+export class SurvivorAmongAbsorbed extends DomainError {
+  readonly code = 'survivor-among-absorbed';
+  readonly kind = 'invalid';
+
+  constructor(id: ProjectId) {
+    super(`Project ${id} cannot absorb itself`);
+  }
+}
+
+// The project is named in the request body, not in the URL: the request
+// cannot be processed, but its target resource exists.
+export class AbsorbedProjectNotFound extends DomainError {
+  readonly code = 'absorbed-project-not-found';
+  readonly kind = 'invalid';
+
+  constructor(id: ProjectId) {
+    super(`Absorbed project ${id} does not exist`);
+  }
+}

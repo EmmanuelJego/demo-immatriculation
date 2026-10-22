@@ -4,6 +4,7 @@ import { DATABASE, type Database } from '../database/database.module.js';
 import { ProjectsController } from './api/projects.controller.js';
 import { AttachSourceKey } from './application/attach-source-key.js';
 import { GetProject } from './application/get-project.js';
+import { MergeProjects } from './application/merge-projects.js';
 import {
   PROJECT_ID_GENERATOR,
   RegisterProject,
@@ -19,6 +20,7 @@ import { DrizzleUnitOfWork } from './infrastructure/drizzle-unit-of-work.js';
     RegisterProject,
     GetProject,
     AttachSourceKey,
+    MergeProjects,
     {
       provide: UNIT_OF_WORK,
       inject: [DATABASE],

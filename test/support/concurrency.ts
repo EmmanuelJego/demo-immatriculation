@@ -42,11 +42,13 @@ export async function waitForLockWait(db: Database): Promise<void> {
 }
 
 // Runs `holder` in a transaction kept open until `contender` is blocked
-// behind it on a lock, then commits it and returns what `contender` returned.
+// behind it on a lock, then runs `whileBlocked`, commits the holder and
+// returns what `contender` returned.
 export async function contendWith<T>(
   db: Database,
   holder: (tx: RegistryTransaction) => Promise<void>,
   contender: () => PromiseLike<T>,
+  whileBlocked: () => Promise<void> = async () => {},
 ): Promise<T> {
   const held = deferred();
   const commit = deferred();
@@ -61,6 +63,7 @@ export async function contendWith<T>(
   const contending = Promise.resolve(contender());
   try {
     await waitForLockWait(db);
+    await whileBlocked();
   } catch (error) {
     // The contender is abandoned: keep its eventual failure from going unhandled.
     contending.catch(() => {});

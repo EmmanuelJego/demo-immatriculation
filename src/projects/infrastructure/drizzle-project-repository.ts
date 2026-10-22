@@ -20,23 +20,37 @@ export class DrizzleProjectRepository implements ProjectRepository {
     return this.findOne(eq(projects.id, id));
   }
 
-  findBySourceKey(key: SourceKey): Promise<Project | null> {
-    const owner = this.db
-      .select({ id: sourceKeys.projectId })
+  findSourceKeyOrigin(key: SourceKey): Promise<Project | null> {
+    const origin = this.db
+      .select({ id: sourceKeys.originProjectId })
       .from(sourceKeys)
       .where(isSourceKey(key));
-    return this.findOne(inArray(projects.id, owner));
+    return this.findOne(inArray(projects.id, origin));
   }
 
-  // The lock is taken on the project row alone: PostgreSQL cannot lock the
-  // nullable side of the outer join that loads its source keys.
   async findByIdForUpdate(id: ProjectId): Promise<Project | null> {
-    const [locked] = await this.db
+    const [project] = await this.findManyByIdForUpdate([id]);
+    return project ?? null;
+  }
+
+  // The locks are taken on the project rows alone: PostgreSQL cannot lock the
+  // nullable side of the outer join that loads their source keys.
+  async findManyByIdForUpdate(ids: readonly ProjectId[]): Promise<Project[]> {
+    const locked = await this.db
       .select({ id: projects.id })
       .from(projects)
-      .where(eq(projects.id, id))
+      .where(inArray(projects.id, [...ids]))
+      .orderBy(asc(projects.id))
       .for('update');
-    return locked ? this.findById(id) : null;
+    if (locked.length === 0) {
+      return [];
+    }
+    return this.findAll(
+      inArray(
+        projects.id,
+        locked.map(({ id }) => id),
+      ),
+    );
   }
 
   async findSourceKeyOwner(key: SourceKey): Promise<ProjectId | null> {
@@ -49,13 +63,38 @@ export class DrizzleProjectRepository implements ProjectRepository {
 
   async attachSourceKey(projectId: ProjectId, key: SourceKey): Promise<void> {
     try {
-      await this.db.insert(sourceKeys).values({ ...key, projectId });
+      await this.db
+        .insert(sourceKeys)
+        .values({ ...key, projectId, originProjectId: projectId });
     } catch (error) {
       throw toDuplicateError(error) ?? error;
     }
   }
 
+  async mergeInto(
+    survivorId: ProjectId,
+    absorbedIds: readonly ProjectId[],
+  ): Promise<Project> {
+    const absorbed = [...absorbedIds];
+    await this.db
+      .update(sourceKeys)
+      .set({ projectId: survivorId })
+      .where(inArray(sourceKeys.projectId, absorbed));
+    await this.db
+      .update(projects)
+      .set({ status: 'MERGED', mergedInto: survivorId })
+      .where(inArray(projects.id, absorbed));
+    const [survivor] = await this.findAll(eq(projects.id, survivorId));
+    return survivor;
+  }
+
   private async findOne(condition: SQL): Promise<Project | null> {
+    const [project] = await this.findAll(condition);
+    return project ?? null;
+  }
+
+  // Loads the projects with their source keys in a single query.
+  private async findAll(condition: SQL): Promise<Project[]> {
     const rows = await this.db
       .select({
         project: projects,
@@ -68,19 +107,22 @@ export class DrizzleProjectRepository implements ProjectRepository {
       .leftJoin(sourceKeys, eq(sourceKeys.projectId, projects.id))
       .where(condition)
       .orderBy(
+        asc(projects.id),
         asc(sourceKeys.attachedAt),
         asc(sourceKeys.system),
         asc(sourceKeys.externalId),
       );
-    if (rows.length === 0) {
-      return null;
+    const byId = new Map<ProjectId, Project>();
+    for (const { project, sourceKey } of rows) {
+      const loaded = byId.get(project.id) ?? { ...project, sourceKeys: [] };
+      byId.set(
+        project.id,
+        sourceKey
+          ? { ...loaded, sourceKeys: [...loaded.sourceKeys, sourceKey] }
+          : loaded,
+      );
     }
-    return {
-      ...rows[0].project,
-      sourceKeys: rows.flatMap(({ sourceKey }) =>
-        sourceKey ? [sourceKey] : [],
-      ),
-    };
+    return [...byId.values()];
   }
 
   async insert(project: NewProject): Promise<Project> {
@@ -90,9 +132,13 @@ export class DrizzleProjectRepository implements ProjectRepository {
         .insert(projects)
         .values(attributes)
         .returning({ createdAt: projects.createdAt });
-      await this.db
-        .insert(sourceKeys)
-        .values(keys.map((key) => ({ ...key, projectId: project.id })));
+      await this.db.insert(sourceKeys).values(
+        keys.map((key) => ({
+          ...key,
+          projectId: project.id,
+          originProjectId: project.id,
+        })),
+      );
       return { ...project, createdAt };
     } catch (error) {
       throw toDuplicateError(error) ?? error;

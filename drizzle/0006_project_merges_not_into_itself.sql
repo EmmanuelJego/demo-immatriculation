@@ -1,0 +1,2 @@
+ALTER TABLE "projects" DROP CONSTRAINT "projects_merged_into_check";--> statement-breakpoint
+ALTER TABLE "projects" ADD CONSTRAINT "projects_merged_into_check" CHECK (("projects"."status" = 'MERGED') = ("projects"."merged_into" is not null) and "projects"."merged_into" <> "projects"."id");

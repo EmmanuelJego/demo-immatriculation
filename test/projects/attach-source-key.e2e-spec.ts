@@ -1,20 +1,20 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
-import { eq } from 'drizzle-orm';
-import { DATABASE, type Database } from '../../src/database/database.module.js';
-import { projects } from '../../src/database/schema.js';
+import { DATABASE } from '../../src/database/database.module.js';
 import { contendWith } from '../support/concurrency.js';
-import { EVENTS_PATH } from '../support/events.js';
+import { eventLog as readEventLog } from '../support/events.js';
 import {
   ANOTHER_SOURCE_KEY,
   aRegistration,
   PROJECTS_PATH,
+  registerProject as register,
 } from '../support/projects.js';
 import { createTestApp, resetDatabase } from '../support/test-app.js';
 
 // Initial key of the project that wins the concurrent attachment.
 const OTHER_PROJECT_SOURCE_KEY = { system: 'dotations', externalId: 'B' };
+const SURVIVOR_SOURCE_KEY = { system: 'dotations', externalId: 'SURVIVOR' };
 
 describe('POST /v1/projects/{id}/source-keys', () => {
   let app: INestApplication<App>;
@@ -31,12 +31,8 @@ describe('POST /v1/projects/{id}/source-keys', () => {
     await app.close();
   });
 
-  async function registerProject(registration = aRegistration()) {
-    const response = await request(app.getHttpServer())
-      .post(PROJECTS_PATH)
-      .send(registration);
-    expect(response.status).toBe(201);
-    return response.body;
+  function registerProject(registration = aRegistration()) {
+    return register(app, registration);
   }
 
   function attach(projectId: string, sourceKey: object) {
@@ -208,18 +204,20 @@ describe('POST /v1/projects/{id}/source-keys', () => {
     });
   });
 
-  describe('on a project that is no longer active', () => {
-    async function closeProject(id: string): Promise<void> {
-      await app
-        .get<Database>(DATABASE)
-        .update(projects)
-        .set({ status: 'MERGED' })
-        .where(eq(projects.id, id));
+  describe('on a project absorbed by a merge', () => {
+    async function absorb(id: string): Promise<void> {
+      const survivor = await registerProject(
+        aRegistration({ sourceKey: SURVIVOR_SOURCE_KEY }),
+      );
+      const response = await request(app.getHttpServer())
+        .post(`${PROJECTS_PATH}/${survivor.id}/merges`)
+        .send({ absorbed: [id] });
+      expect(response.status).toBe(200);
     }
 
     it('rejects, without a new event, the attachment of a new key', async () => {
       const project = await registerProject();
-      await closeProject(project.id);
+      await absorb(project.id);
       const eventsBefore = await eventLog();
 
       const response = await attach(project.id, ANOTHER_SOURCE_KEY);
@@ -234,10 +232,10 @@ describe('POST /v1/projects/{id}/source-keys', () => {
       expect(await eventLog()).toEqual(eventsBefore);
     });
 
-    it('rejects even a key the project already has', async () => {
+    it('reports the closed project, rather than the new owner, for a key it had before', async () => {
       const registration = aRegistration();
       const project = await registerProject(registration);
-      await closeProject(project.id);
+      await absorb(project.id);
 
       const response = await attach(project.id, registration.sourceKey);
 
@@ -283,8 +281,7 @@ describe('POST /v1/projects/{id}/source-keys', () => {
     });
   });
 
-  async function eventLog(): Promise<unknown[]> {
-    const response = await request(app.getHttpServer()).get(EVENTS_PATH);
-    return response.body.data;
+  function eventLog(): Promise<unknown[]> {
+    return readEventLog(app);
   }
 });

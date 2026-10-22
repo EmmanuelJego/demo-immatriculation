@@ -1,11 +1,21 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
+import { eq, sql } from 'drizzle-orm';
 import { DATABASE, type Database } from '../../src/database/database.module.js';
+import { projects } from '../../src/database/schema.js';
 import { DrizzleUnitOfWork } from '../../src/projects/infrastructure/drizzle-unit-of-work.js';
 import { contendWith } from '../support/concurrency.js';
-import { aRegistration, PROJECTS_PATH } from '../support/projects.js';
+import {
+  ANOTHER_SOURCE_KEY,
+  aRegistration,
+  PROJECTS_PATH,
+  registerProject,
+} from '../support/projects.js';
 import { createTestApp, resetDatabase } from '../support/test-app.js';
+
+const MERGED_INTO_VIOLATION = /projects_merged_into_check/;
+const LOCK_NOT_AVAILABLE = '55P03';
 
 describe('Project repository', () => {
   let app: INestApplication<App>;
@@ -43,6 +53,101 @@ describe('Project repository', () => {
       );
 
       expect(lockedLater?.id).toBe(project.id);
+    });
+  });
+
+  describe('findManyByIdForUpdate', () => {
+    async function isLocked(id: string): Promise<boolean> {
+      const attempt = db.transaction((tx) =>
+        tx.execute(
+          sql`select id from projects where id = ${id} for update nowait`,
+        ),
+      );
+      return attempt.then(
+        () => false,
+        (error: unknown) =>
+          (error as { cause?: { code?: string } }).cause?.code ===
+          LOCK_NOT_AVAILABLE,
+      );
+    }
+
+    it('locks the projects in ascending id order, whatever the order asked', async () => {
+      const ids = [
+        (await registerProject(app)).id,
+        (
+          await registerProject(
+            app,
+            aRegistration({ sourceKey: ANOTHER_SOURCE_KEY }),
+          )
+        ).id,
+      ];
+      const [lower, higher] = ids.sort();
+      let lowerLockedWhileWaiting = false;
+
+      const locked = await contendWith(
+        db,
+        async ({ projects }) => {
+          await projects.findByIdForUpdate(higher);
+        },
+        () =>
+          new DrizzleUnitOfWork(db).run(({ projects }) =>
+            projects.findManyByIdForUpdate([higher, lower]),
+          ),
+        async () => {
+          lowerLockedWhileWaiting = await isLocked(lower);
+        },
+      );
+
+      expect(lowerLockedWhileWaiting).toBe(true);
+      expect(locked.map(({ id }) => id).sort()).toEqual([lower, higher]);
+    });
+  });
+
+  describe('projects table', () => {
+    it('refuses a merged project that points to no survivor', async () => {
+      const project = await registerProject(app);
+
+      const update = db
+        .update(projects)
+        .set({ status: 'MERGED' })
+        .where(eq(projects.id, project.id));
+
+      await expect(update).rejects.toHaveProperty(
+        'cause.message',
+        expect.stringMatching(MERGED_INTO_VIOLATION),
+      );
+    });
+
+    it('refuses a project merged into itself', async () => {
+      const project = await registerProject(app);
+
+      const update = db
+        .update(projects)
+        .set({ status: 'MERGED', mergedInto: project.id })
+        .where(eq(projects.id, project.id));
+
+      await expect(update).rejects.toHaveProperty(
+        'cause.message',
+        expect.stringMatching(MERGED_INTO_VIOLATION),
+      );
+    });
+
+    it('refuses an active project that points to a survivor', async () => {
+      const project = await registerProject(app);
+      const other = await registerProject(
+        app,
+        aRegistration({ sourceKey: ANOTHER_SOURCE_KEY }),
+      );
+
+      const update = db
+        .update(projects)
+        .set({ mergedInto: other.id })
+        .where(eq(projects.id, project.id));
+
+      await expect(update).rejects.toHaveProperty(
+        'cause.message',
+        expect.stringMatching(MERGED_INTO_VIOLATION),
+      );
     });
   });
 });

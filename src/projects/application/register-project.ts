@@ -32,7 +32,9 @@ export class RegisterProject {
 
   private attempt(registration: Registration): Promise<RegistrationResult> {
     return this.unitOfWork.run(async ({ projects, events }) => {
-      const existing = await projects.findBySourceKey(registration.sourceKey);
+      const existing = await projects.findSourceKeyOrigin(
+        registration.sourceKey,
+      );
       if (existing) {
         return {
           project: resolveRegistration(existing, registration),
