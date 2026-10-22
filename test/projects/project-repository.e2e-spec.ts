@@ -16,6 +16,7 @@ import { createTestApp, resetDatabase } from '../support/test-app.js';
 
 const MERGED_INTO_VIOLATION = /projects_merged_into_check/;
 const LOCK_NOT_AVAILABLE = '55P03';
+const SPLIT_INTO_VIOLATION = /projects_split_into_check/;
 
 describe('Project repository', () => {
   let app: INestApplication<App>;
@@ -103,6 +104,18 @@ describe('Project repository', () => {
     });
   });
 
+  describe('findSourceKeyOwners', () => {
+    it('finds no owner for no key, even when keys are attached', async () => {
+      await registerProject(app);
+
+      const owners = await new DrizzleUnitOfWork(db).run(({ projects }) =>
+        projects.findSourceKeyOwners([]),
+      );
+
+      expect(owners).toEqual([]);
+    });
+  });
+
   describe('projects table', () => {
     it('refuses a merged project that points to no survivor', async () => {
       const project = await registerProject(app);
@@ -115,6 +128,35 @@ describe('Project repository', () => {
       await expect(update).rejects.toHaveProperty(
         'cause.message',
         expect.stringMatching(MERGED_INTO_VIOLATION),
+      );
+    });
+
+    const SPLIT_INCONSISTENCIES: {
+      case: string;
+      set: { status?: 'SPLIT'; splitInto?: string[] };
+    }[] = [
+      { case: 'a split project without successors', set: { status: 'SPLIT' } },
+      {
+        case: 'a split project with a single successor',
+        set: { status: 'SPLIT', splitInto: ['PRJ-0000-0001'] },
+      },
+      {
+        case: 'an active project with successors',
+        set: { splitInto: ['PRJ-0000-0001', 'PRJ-0000-0002'] },
+      },
+    ];
+
+    it.each(SPLIT_INCONSISTENCIES)('refuses $case', async ({ set }) => {
+      const project = await registerProject(app);
+
+      const update = db
+        .update(projects)
+        .set(set)
+        .where(eq(projects.id, project.id));
+
+      await expect(update).rejects.toHaveProperty(
+        'cause.message',
+        expect.stringMatching(SPLIT_INTO_VIOLATION),
       );
     });
 

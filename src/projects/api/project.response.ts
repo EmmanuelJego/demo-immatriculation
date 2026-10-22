@@ -38,6 +38,15 @@ export class ProjectResponse {
   })
   readonly mergedInto: string | null;
 
+  @ApiProperty({
+    type: [String],
+    nullable: true,
+    description:
+      'Successors created from the project, when it is SPLIT: clients follow these links',
+    example: null,
+  })
+  readonly splitInto: readonly string[] | null;
+
   @ApiProperty({ type: [SourceKeyResponse] })
   readonly sourceKeys: readonly SourceKeyResponse[];
 
@@ -52,10 +61,19 @@ export function toProjectResponse(project: Project): ProjectResponse {
     ownerSiren: project.ownerSiren,
     status: project.status,
     mergedInto: project.mergedInto,
+    splitInto: project.splitInto && [...project.splitInto],
     sourceKeys: project.sourceKeys.map(({ system, externalId }) => ({
       system,
       externalId,
     })),
     createdAt: project.createdAt.toISOString(),
   };
+}
+
+export class SplitResponse {
+  @ApiProperty({ type: ProjectResponse, description: 'The source, now SPLIT' })
+  readonly source: ProjectResponse;
+
+  @ApiProperty({ type: [ProjectResponse] })
+  readonly successors: readonly ProjectResponse[];
 }

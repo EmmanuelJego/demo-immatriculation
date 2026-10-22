@@ -21,13 +21,19 @@ import { AttachSourceKey } from '../application/attach-source-key.js';
 import { GetProject } from '../application/get-project.js';
 import { MergeProjects } from '../application/merge-projects.js';
 import { RegisterProject } from '../application/register-project.js';
+import { SplitProject } from '../application/split-project.js';
 import { PROJECT_ID_PATTERN } from '../domain/project-id.js';
 import { MergeProjectsRequest } from './merge-projects.request.js';
-import { ProjectResponse, toProjectResponse } from './project.response.js';
+import {
+  ProjectResponse,
+  SplitResponse,
+  toProjectResponse,
+} from './project.response.js';
 import {
   RegisterProjectRequest,
   SourceKeyRequest,
 } from './register-project.request.js';
+import { SplitProjectRequest } from './split-project.request.js';
 
 const PROJECTS_PATH = '/v1/projects';
 
@@ -56,6 +62,7 @@ export class ProjectsController {
     private readonly getProject: GetProject,
     private readonly attachSourceKey: AttachSourceKey,
     private readonly mergeProjects: MergeProjects,
+    private readonly splitProject: SplitProject,
   ) {}
 
   @Post()
@@ -163,6 +170,47 @@ export class ProjectsController {
     const survivor = await this.mergeProjects.execute(id, request.absorbed);
     response.setHeader('Content-Location', `${PROJECTS_PATH}/${survivor.id}`);
     return toProjectResponse(survivor);
+  }
+
+  @Post(':id/splits')
+  @ApiOperation({
+    summary: 'Split the project `{id}` into new successors',
+    description:
+      'Each source key of the project goes to exactly one successor, which may also bring new keys. The project becomes SPLIT and lists its successors. Idempotent: the same split again returns the existing successors.',
+  })
+  @ApiProjectIdParam()
+  @ApiCreatedResponse({
+    type: SplitResponse,
+    description: 'Project split into the successors created',
+  })
+  @ApiOkResponse({
+    type: SplitResponse,
+    description: 'Replay: the project is already split into these successors',
+  })
+  @ApiProblemResponse(HttpStatus.BAD_REQUEST, 'Invalid list of successors')
+  @ApiProblemResponse(HttpStatus.NOT_FOUND, 'No project has this id')
+  @ApiProblemResponse(
+    HttpStatus.CONFLICT,
+    'The project is no longer active or was split differently, or a new key belongs to another project',
+  )
+  @ApiProblemResponse(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    'A key is allocated to two successors, or a key of the project to none',
+  )
+  async split(
+    @Param('id') id: string,
+    @Body() request: SplitProjectRequest,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<SplitResponse> {
+    const { source, successors, created } = await this.splitProject.execute(
+      id,
+      request.successors,
+    );
+    response.status(created ? HttpStatus.CREATED : HttpStatus.OK);
+    return {
+      source: toProjectResponse(source),
+      successors: successors.map(toProjectResponse),
+    };
   }
 
   @Get(':id')

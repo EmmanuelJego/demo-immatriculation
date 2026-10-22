@@ -95,11 +95,15 @@ Ces règles sont la spécification. Chacune doit être couverte par au moins un 
 
 **Scission**
 - Entrée : un projet source `P` et au moins 2 projets issus, chacun avec un `label`, un `ownerSiren` et au moins une clé source.
-- Chaque clé source de `P` est attribuée à **exactement un** projet issu. Les projets issus peuvent aussi
-  apporter de nouvelles clés sources, non rattachées ailleurs.
+- Chaque clé source de `P` est attribuée à **exactement un** projet issu : une clé attribuée deux fois, ou une clé
+  de `P` attribuée à aucun, est un `422`. Les projets issus peuvent aussi apporter de nouvelles clés sources, non
+  rattachées ailleurs (sinon `409`).
+- `P` doit être `ACTIVE`, sinon `409` (sauf rejeu, ci-dessous).
 - Effet : `P` passe à `SPLIT` et porte `splitInto = [ids des projets issus]`. Les projets issus sont créés en `ACTIVE`.
+  Un projet est `SPLIT` si et seulement s'il porte `splitInto`, d'au moins 2 projets (`CHECK` en base).
 - Idempotence : si `P` est déjà `SPLIT` avec la même répartition des clés sources, on renvoie les projets issus
   existants (`200`) sans nouvel événement. Si la répartition diffère : `409`.
+- Réponse : `{ source, successors }`, le projet source et les projets issus.
 
 **Journal d'événements**
 - Types : `ProjectRegistered`, `SourceKeyAttached`, `ProjectsMerged`, `ProjectSplit`.

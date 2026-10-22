@@ -1,6 +1,9 @@
 import {
+  ProjectAlreadySplit,
   ProjectNotActive,
+  SourceKeyAllocatedTwice,
   SourceKeyAlreadyRegistered,
+  SourceKeyNotAllocated,
   SurvivorAmongAbsorbed,
   SourceKeyOwnedByAnotherProject,
 } from './errors.js';
@@ -9,6 +12,9 @@ import {
   mergeProjects,
   registerProject,
   resolveRegistration,
+  resolveSplit,
+  splitProject,
+  type NewSuccessor,
   type Project,
   type Registration,
 } from './project.js';
@@ -38,6 +44,7 @@ describe('registerProject', () => {
       ownerSiren: REGISTRATION.ownerSiren,
       status: 'ACTIVE',
       mergedInto: null,
+      splitInto: null,
       sourceKeys: [REGISTRATION.sourceKey],
     });
   });
@@ -217,5 +224,157 @@ describe('mergeProjects', () => {
     expect(() =>
       mergeProjects(closedSurvivor, [absorbed, closedSurvivor]),
     ).toThrow(SurvivorAmongAbsorbed);
+  });
+});
+
+describe('splitProject', () => {
+  const source: Project = {
+    ...REGISTERED_PROJECT,
+    sourceKeys: [REGISTRATION.sourceKey, NEW_SOURCE_KEY],
+  };
+  const FRESH_SOURCE_KEY = { system: 'aides-territoires', externalId: 'AT-7' };
+  const SUCCESSOR_IDS = ['PRJ-0000-0001', 'PRJ-0000-0002'];
+  const SUCCESSORS: NewSuccessor[] = [
+    {
+      label: 'Rénovation de l’école, tranche 1',
+      ownerSiren: REGISTRATION.ownerSiren,
+      sourceKeys: [REGISTRATION.sourceKey],
+    },
+    {
+      label: 'Rénovation de l’école, tranche 2',
+      ownerSiren: '217500016',
+      sourceKeys: [NEW_SOURCE_KEY, FRESH_SOURCE_KEY],
+    },
+  ];
+
+  it('creates active successors sharing the source keys, and describes the split in a ProjectSplit event', () => {
+    const split = splitProject(source, SUCCESSORS, SUCCESSOR_IDS, []);
+
+    const described = SUCCESSORS.map((successor, index) => ({
+      id: SUCCESSOR_IDS[index],
+      ...successor,
+    }));
+    expect(split).toEqual({
+      successors: described.map((successor) => ({
+        ...successor,
+        status: 'ACTIVE',
+        mergedInto: null,
+        splitInto: null,
+      })),
+      event: {
+        type: 'ProjectSplit',
+        projectIds: [PROJECT_ID, ...SUCCESSOR_IDS],
+        payload: { source: PROJECT_ID, successors: described },
+      },
+    });
+  });
+
+  it('rejects a key allocated to two successors', () => {
+    const [first, second] = SUCCESSORS;
+
+    expect(() =>
+      splitProject(
+        source,
+        [
+          first,
+          {
+            ...second,
+            sourceKeys: [...second.sourceKeys, ...first.sourceKeys],
+          },
+        ],
+        SUCCESSOR_IDS,
+        [],
+      ),
+    ).toThrow(SourceKeyAllocatedTwice);
+  });
+
+  it('rejects a split leaving a key of the source to no successor', () => {
+    const [first, second] = SUCCESSORS;
+
+    expect(() =>
+      splitProject(
+        source,
+        [first, { ...second, sourceKeys: [FRESH_SOURCE_KEY] }],
+        SUCCESSOR_IDS,
+        [],
+      ),
+    ).toThrow(SourceKeyNotAllocated);
+  });
+
+  it('rejects a new key that belongs to another project', () => {
+    expect(() =>
+      splitProject(source, SUCCESSORS, SUCCESSOR_IDS, [
+        { sourceKey: REGISTRATION.sourceKey, projectId: PROJECT_ID },
+        { sourceKey: FRESH_SOURCE_KEY, projectId: OTHER_PROJECT_ID },
+      ]),
+    ).toThrow(SourceKeyOwnedByAnotherProject);
+  });
+
+  it.each(['MERGED', 'SPLIT'] as const)(
+    'rejects the split of a %s project',
+    (status) => {
+      expect(() =>
+        splitProject({ ...source, status }, SUCCESSORS, SUCCESSOR_IDS, []),
+      ).toThrow(ProjectNotActive);
+    },
+  );
+
+  it('reports a key allocated twice before a closed source', () => {
+    const [first] = SUCCESSORS;
+
+    expect(() =>
+      splitProject(
+        { ...source, status: 'MERGED' },
+        [first, first],
+        SUCCESSOR_IDS,
+        [],
+      ),
+    ).toThrow(SourceKeyAllocatedTwice);
+  });
+
+  describe('once the project is split', () => {
+    const { successors } = splitProject(source, SUCCESSORS, SUCCESSOR_IDS, []);
+    const existing: Project[] = successors.map((successor) => ({
+      ...successor,
+      createdAt: REGISTERED_PROJECT.createdAt,
+    }));
+    const splitSource: Project = {
+      ...source,
+      status: 'SPLIT',
+      splitInto: SUCCESSOR_IDS,
+      sourceKeys: [],
+    };
+    const [first, second] = SUCCESSORS;
+
+    it('returns the existing successors when the same split is replayed, in any order', () => {
+      expect(resolveSplit(splitSource, existing, [second, first])).toEqual(
+        existing,
+      );
+    });
+
+    it.each([
+      {
+        case: 'another allocation of the keys',
+        request: [
+          { ...first, sourceKeys: [...first.sourceKeys, FRESH_SOURCE_KEY] },
+          { ...second, sourceKeys: [NEW_SOURCE_KEY] },
+        ],
+      },
+      {
+        case: 'other successor attributes',
+        request: [{ ...first, label: 'Construction d’un gymnase' }, second],
+      },
+      { case: 'fewer successors', request: [first] },
+    ])('rejects a replay with $case', ({ request }) => {
+      expect(() => resolveSplit(splitSource, existing, request)).toThrow(
+        ProjectAlreadySplit,
+      );
+    });
+
+    it('reports a key allocated twice rather than a different split', () => {
+      expect(() => resolveSplit(splitSource, existing, [first, first])).toThrow(
+        SourceKeyAllocatedTwice,
+      );
+    });
   });
 });

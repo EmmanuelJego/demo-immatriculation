@@ -1,7 +1,10 @@
 import type { NewEvent } from '../../events/domain/event.js';
 import {
+  ProjectAlreadySplit,
   ProjectNotActive,
+  SourceKeyAllocatedTwice,
   SourceKeyAlreadyRegistered,
+  SourceKeyNotAllocated,
   SourceKeyOwnedByAnotherProject,
   SurvivorAmongAbsorbed,
 } from './errors.js';
@@ -30,12 +33,20 @@ export interface Project {
   readonly status: ProjectStatus;
   // The survivor that absorbed the project, once it is MERGED.
   readonly mergedInto: ProjectId | null;
+  // The successors created from the project, once it is SPLIT.
+  readonly splitInto: readonly ProjectId[] | null;
   readonly sourceKeys: readonly SourceKey[];
   readonly createdAt: Date;
 }
 
 // A project before the registry has stored it and dated its creation.
 export type NewProject = Omit<Project, 'createdAt'>;
+
+// The project a source key is attached to.
+export interface SourceKeyOwnership {
+  readonly sourceKey: SourceKey;
+  readonly projectId: ProjectId;
+}
 
 export interface ProjectRegistered extends NewEvent {
   readonly type: 'ProjectRegistered';
@@ -59,6 +70,7 @@ export function registerProject(
       ownerSiren,
       status: 'ACTIVE',
       mergedInto: null,
+      splitInto: null,
       sourceKeys: [sourceKey],
     },
     event: {
@@ -167,6 +179,120 @@ export function mergeProjects(
       },
     },
   };
+}
+
+// A project to create by a split, with its share of the source keys.
+export type NewSuccessor = {
+  readonly label: string;
+  readonly ownerSiren: string;
+  readonly sourceKeys: readonly SourceKey[];
+};
+
+export interface ProjectSplit extends NewEvent {
+  readonly type: 'ProjectSplit';
+  readonly payload: {
+    readonly source: ProjectId;
+    readonly successors: readonly (NewSuccessor & { readonly id: ProjectId })[];
+  };
+}
+
+export interface Split {
+  readonly successors: readonly NewProject[];
+  readonly event: ProjectSplit;
+}
+
+// `owners` are the current owners of the keys allocated to the successors.
+export function splitProject(
+  source: Project,
+  successors: readonly NewSuccessor[],
+  ids: readonly ProjectId[],
+  owners: readonly SourceKeyOwnership[],
+): Split {
+  const allocated = successors.flatMap(({ sourceKeys }) => sourceKeys);
+  assertAllocatedOnce(allocated);
+  assertActive(source);
+  const unallocated = source.sourceKeys.find(
+    (key) => !allocated.some((other) => isSameKey(other, key)),
+  );
+  if (unallocated) {
+    throw new SourceKeyNotAllocated(unallocated, source.id);
+  }
+  const ownedElsewhere = owners.find(
+    ({ projectId }) => projectId !== source.id,
+  );
+  if (ownedElsewhere) {
+    throw new SourceKeyOwnedByAnotherProject(
+      ownedElsewhere.sourceKey,
+      ownedElsewhere.projectId,
+    );
+  }
+  const described = successors.map(
+    ({ label, ownerSiren, sourceKeys }, index) => ({
+      id: ids[index],
+      label,
+      ownerSiren,
+      sourceKeys: sourceKeys.map(({ system, externalId }) => ({
+        system,
+        externalId,
+      })),
+    }),
+  );
+  return {
+    successors: described.map((successor) => ({
+      ...successor,
+      status: 'ACTIVE',
+      mergedInto: null,
+      splitInto: null,
+    })),
+    event: {
+      type: 'ProjectSplit',
+      projectIds: [source.id, ...ids],
+      payload: { source: source.id, successors: described },
+    },
+  };
+}
+
+// A split request on a project already split is a replay when it describes
+// its successors exactly, in any order.
+export function resolveSplit(
+  source: Project,
+  existing: readonly Project[],
+  successors: readonly NewSuccessor[],
+): readonly Project[] {
+  assertAllocatedOnce(successors.flatMap(({ sourceKeys }) => sourceKeys));
+  const isReplay =
+    successors.length === existing.length &&
+    successors.every((successor) =>
+      existing.some((project) => describesProject(successor, project)),
+    );
+  if (!isReplay) {
+    throw new ProjectAlreadySplit(source.id);
+  }
+  return existing;
+}
+
+function describesProject(successor: NewSuccessor, project: Project): boolean {
+  return (
+    successor.label === project.label &&
+    successor.ownerSiren === project.ownerSiren &&
+    successor.sourceKeys.length === project.sourceKeys.length &&
+    successor.sourceKeys.every((key) =>
+      project.sourceKeys.some((other) => isSameKey(other, key)),
+    )
+  );
+}
+
+function assertAllocatedOnce(keys: readonly SourceKey[]): void {
+  const duplicate = keys.find(
+    (key, index) => keys.findIndex((other) => isSameKey(other, key)) !== index,
+  );
+  if (duplicate) {
+    throw new SourceKeyAllocatedTwice(duplicate);
+  }
+}
+
+function isSameKey(key: SourceKey, other: SourceKey): boolean {
+  return key.system === other.system && key.externalId === other.externalId;
 }
 
 // Merged and split projects are kept for the record, but are closed.

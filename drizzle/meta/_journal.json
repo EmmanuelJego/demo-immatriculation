@@ -50,6 +50,13 @@
       "when": 1792651143928,
       "tag": "0006_project_merges_not_into_itself",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792652529532,
+      "tag": "0007_project_splits",
+      "breakpoints": true
     }
   ]
 }

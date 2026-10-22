@@ -147,6 +147,55 @@ describe('OpenAPI specification', () => {
     }
   });
 
+  it('documents the split, its replay and its problems', async () => {
+    const { body } = await request(app.getHttpServer()).get(OPENAPI_JSON_PATH);
+    const operation = body.paths['/v1/projects/{id}/splits'].post;
+    const { schemas } = body.components;
+
+    expect(operation.requestBody.content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/SplitProjectRequest',
+    });
+    expect(schemas.SplitProjectRequest.properties.successors).toMatchObject({
+      type: 'array',
+      minItems: 2,
+      maxItems: 20,
+    });
+    expect(Object.keys(schemas.SuccessorRequest.properties).sort()).toEqual([
+      'label',
+      'ownerSiren',
+      'sourceKeys',
+    ]);
+    expect(Object.keys(operation.responses).sort()).toEqual([
+      '200',
+      '201',
+      '400',
+      '404',
+      '409',
+      '422',
+    ]);
+    for (const status of ['200', '201']) {
+      expect(
+        operation.responses[status].content['application/json'].schema,
+      ).toEqual({ $ref: '#/components/schemas/SplitResponse' });
+    }
+    for (const status of ['400', '404', '409', '422']) {
+      expect(
+        operation.responses[status].content['application/problem+json'].schema,
+      ).toEqual({ $ref: PROBLEM_DETAILS_SCHEMA });
+    }
+  });
+
+  it('documents the links of a split project to its successors', async () => {
+    const { body } = await request(app.getHttpServer()).get(OPENAPI_JSON_PATH);
+    const project = body.components.schemas.ProjectResponse;
+
+    expect(project.required).toContain('splitInto');
+    expect(project.properties.splitInto).toMatchObject({
+      type: 'array',
+      nullable: true,
+    });
+  });
+
   it('documents the link of a merged project to its survivor', async () => {
     const { body } = await request(app.getHttpServer()).get(OPENAPI_JSON_PATH);
     const project = body.components.schemas.ProjectResponse;

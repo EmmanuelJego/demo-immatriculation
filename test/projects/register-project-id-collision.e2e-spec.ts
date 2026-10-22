@@ -12,8 +12,9 @@ import { createTestApp, resetDatabase } from '../support/test-app.js';
 
 const TAKEN_ID = 'PRJ-AAAA-AAAA';
 const FREE_ID = 'PRJ-BBBB-BBBB';
+const OTHER_FREE_ID = 'PRJ-CCCC-CCCC';
 
-describe('POST /v1/projects, when the generated id is already taken', () => {
+describe('Commands drawing a registration id that is already taken', () => {
   let app: INestApplication<App>;
   let generatedIds: string[];
 
@@ -75,5 +76,31 @@ describe('POST /v1/projects, when the generated id is already taken', () => {
       detail: 'An unexpected error occurred',
     });
     expect(await eventLog()).toHaveLength(1);
+  });
+
+  it('draws new ids for the successors of a split', async () => {
+    generatedIds = [TAKEN_ID, TAKEN_ID, FREE_ID, FREE_ID, OTHER_FREE_ID];
+    await registerTakingTheId();
+
+    const response = await request(app.getHttpServer())
+      .post(`${PROJECTS_PATH}/${TAKEN_ID}/splits`)
+      .send({
+        successors: [
+          {
+            ...aRegistration(),
+            sourceKey: undefined,
+            sourceKeys: [aRegistration().sourceKey],
+          },
+          {
+            ...aRegistration(),
+            sourceKey: undefined,
+            sourceKeys: [ANOTHER_SOURCE_KEY],
+          },
+        ],
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.source.splitInto).toEqual([FREE_ID, OTHER_FREE_ID]);
+    expect(await eventLog()).toHaveLength(2);
   });
 });

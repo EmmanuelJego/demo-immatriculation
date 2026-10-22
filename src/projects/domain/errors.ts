@@ -61,3 +61,34 @@ export class AbsorbedProjectNotFound extends DomainError {
     super(`Absorbed project ${id} does not exist`);
   }
 }
+
+export class SourceKeyAllocatedTwice extends DomainError {
+  readonly code = 'source-key-allocated-twice';
+  readonly kind = 'invalid';
+
+  constructor(key: SourceKey) {
+    super(
+      `Source key ${key.system}/${key.externalId} is allocated to more than one successor`,
+    );
+  }
+}
+
+export class SourceKeyNotAllocated extends DomainError {
+  readonly code = 'source-key-not-allocated';
+  readonly kind = 'invalid';
+
+  constructor(key: SourceKey, source: ProjectId) {
+    super(
+      `Source key ${key.system}/${key.externalId} of project ${source} is allocated to no successor`,
+    );
+  }
+}
+
+export class ProjectAlreadySplit extends DomainError {
+  readonly code = 'project-already-split';
+  readonly kind = 'conflict';
+
+  constructor(id: ProjectId) {
+    super(`Project ${id} is already split into other successors`);
+  }
+}

@@ -7,9 +7,14 @@ import {
   type RegistryTransaction,
   type UnitOfWork,
 } from '../../src/projects/application/unit-of-work.js';
+import { registerProject } from '../../src/projects/domain/project.js';
 import { DrizzleProjectRepository } from '../../src/projects/infrastructure/drizzle-project-repository.js';
 import { DrizzleUnitOfWork } from '../../src/projects/infrastructure/drizzle-unit-of-work.js';
-import { aRegistration, PROJECTS_PATH } from '../support/projects.js';
+import {
+  ANOTHER_SOURCE_KEY,
+  aRegistration,
+  PROJECTS_PATH,
+} from '../support/projects.js';
 import { createTestApp, resetDatabase } from '../support/test-app.js';
 
 // The real unit of work, except that writing to the event log fails, as if
@@ -33,7 +38,9 @@ class FailingEventLogUnitOfWork implements UnitOfWork {
   }
 }
 
-describe('POST /v1/projects, when the event cannot be recorded', () => {
+const SOURCE_ID = 'PRJ-AAAA-AAAA';
+
+describe('Commands, when the event cannot be recorded', () => {
   let app: INestApplication<App>;
 
   beforeAll(async () => {
@@ -65,5 +72,31 @@ describe('POST /v1/projects, when the event cannot be recorded', () => {
     expect(
       await repository.findSourceKeyOrigin(registration.sourceKey),
     ).toBeNull();
+  });
+
+  it('splits nothing: no successor without the event', async () => {
+    const registration = aRegistration();
+    const repository = new DrizzleProjectRepository(app.get(DATABASE));
+    // Stored without the API, whose registration would fail as well.
+    await repository.insert(registerProject(registration, SOURCE_ID).project);
+
+    const response = await request(app.getHttpServer())
+      .post(`${PROJECTS_PATH}/${SOURCE_ID}/splits`)
+      .send({
+        successors: [registration.sourceKey, ANOTHER_SOURCE_KEY].map((key) => ({
+          label: registration.label,
+          ownerSiren: registration.ownerSiren,
+          sourceKeys: [key],
+        })),
+      });
+
+    expect(response.status).toBe(500);
+    expect(await repository.findById(SOURCE_ID)).toMatchObject({
+      status: 'ACTIVE',
+      sourceKeys: [registration.sourceKey],
+    });
+    expect(await repository.findSourceKeyOwners([ANOTHER_SOURCE_KEY])).toEqual(
+      [],
+    );
   });
 });

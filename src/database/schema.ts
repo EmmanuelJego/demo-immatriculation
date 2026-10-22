@@ -27,6 +27,7 @@ export const projects = pgTable(
     ownerSiren: char({ length: 9 }).notNull(),
     status: projectStatus().notNull(),
     mergedInto: text().references((): AnyPgColumn => projects.id),
+    splitInto: text().array(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -35,6 +36,11 @@ export const projects = pgTable(
     check(
       'projects_merged_into_check',
       sql`(${table.status} = 'MERGED') = (${table.mergedInto} is not null) and ${table.mergedInto} <> ${table.id}`,
+    ),
+    // A project is SPLIT exactly when it lists its successors, at least two.
+    check(
+      'projects_split_into_check',
+      sql`(${table.status} = 'SPLIT') = (${table.splitInto} is not null) and cardinality(${table.splitInto}) >= 2`,
     ),
   ],
 );

@@ -1,0 +1,2 @@
+ALTER TABLE "projects" ADD COLUMN "split_into" text[];--> statement-breakpoint
+ALTER TABLE "projects" ADD CONSTRAINT "projects_split_into_check" CHECK (("projects"."status" = 'SPLIT') = ("projects"."split_into" is not null) and cardinality("projects"."split_into") >= 2);

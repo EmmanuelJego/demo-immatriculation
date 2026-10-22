@@ -1,13 +1,19 @@
-import { and, asc, eq, inArray, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
 import type { DatabaseExecutor } from '../../database/database.module.js';
 import { projects, sourceKeys } from '../../database/schema.js';
 import { violatedUniqueConstraint } from '../../database/unique-violation.js';
 import type { ProjectId } from '../domain/project-id.js';
-import type { NewProject, Project, SourceKey } from '../domain/project.js';
+import type {
+  NewProject,
+  Project,
+  SourceKey,
+  SourceKeyOwnership,
+} from '../domain/project.js';
 import {
   DuplicateProjectId,
   DuplicateSourceKey,
   type ProjectRepository,
+  type StoredSplit,
 } from '../domain/project-repository.js';
 
 const PROJECTS_PRIMARY_KEY = 'projects_pkey';
@@ -18,6 +24,13 @@ export class DrizzleProjectRepository implements ProjectRepository {
 
   findById(id: ProjectId): Promise<Project | null> {
     return this.findOne(eq(projects.id, id));
+  }
+
+  async findManyById(ids: readonly ProjectId[]): Promise<Project[]> {
+    const loaded = await this.findAll(inArray(projects.id, [...ids]));
+    return ids.flatMap(
+      (id) => loaded.find((project) => project.id === id) ?? [],
+    );
   }
 
   findSourceKeyOrigin(key: SourceKey): Promise<Project | null> {
@@ -61,6 +74,27 @@ export class DrizzleProjectRepository implements ProjectRepository {
     return row?.projectId ?? null;
   }
 
+  async findSourceKeyOwners(
+    keys: readonly SourceKey[],
+  ): Promise<SourceKeyOwnership[]> {
+    // Without a key, or() would drop the condition and select every key.
+    if (keys.length === 0) {
+      return [];
+    }
+    const rows = await this.db
+      .select({
+        system: sourceKeys.system,
+        externalId: sourceKeys.externalId,
+        projectId: sourceKeys.projectId,
+      })
+      .from(sourceKeys)
+      .where(or(...keys.map(isSourceKey)));
+    return rows.map(({ projectId, ...sourceKey }) => ({
+      sourceKey,
+      projectId,
+    }));
+  }
+
   async attachSourceKey(projectId: ProjectId, key: SourceKey): Promise<void> {
     try {
       await this.db
@@ -86,6 +120,84 @@ export class DrizzleProjectRepository implements ProjectRepository {
       .where(inArray(projects.id, absorbed));
     const [survivor] = await this.findAll(eq(projects.id, survivorId));
     return survivor;
+  }
+
+  async split(
+    sourceId: ProjectId,
+    successors: readonly NewProject[],
+  ): Promise<StoredSplit> {
+    const ids = successors.map(({ id }) => id);
+    const allocation = successors.flatMap(({ id, sourceKeys: keys }) =>
+      keys.map((key) => ({ ...key, projectId: id })),
+    );
+    try {
+      await this.db.insert(projects).values(successors.map(toProjectRow));
+      const transferred = await this.transferSourceKeys(sourceId, allocation);
+      await this.attachNewSourceKeys(
+        allocation.filter(
+          (key) => !transferred.some((other) => isSameKey(other, key)),
+        ),
+      );
+    } catch (error) {
+      throw toDuplicateError(error) ?? error;
+    }
+    await this.db
+      .update(projects)
+      .set({ status: 'SPLIT', splitInto: ids })
+      .where(eq(projects.id, sourceId));
+    const [source, ...stored] = await this.findManyById([sourceId, ...ids]);
+    return { source, successors: stored };
+  }
+
+  // Moves each key the source owns to the successor it is allocated to, and
+  // returns the keys moved.
+  private async transferSourceKeys(
+    sourceId: ProjectId,
+    allocation: readonly AllocatedSourceKey[],
+  ): Promise<SourceKey[]> {
+    if (allocation.length === 0) {
+      return [];
+    }
+    const rows = sql.join(
+      allocation.map(
+        ({ system, externalId, projectId }) =>
+          sql`(${system}, ${externalId}, ${projectId})`,
+      ),
+      sql`, `,
+    );
+    const { rows: transferred } = await this.db.execute<{
+      system: string;
+      external_id: string;
+    }>(sql`
+      update ${sourceKeys}
+      set project_id = allocation.project_id
+      from (values ${rows}) as allocation (system, external_id, project_id)
+      where ${sourceKeys.projectId} = ${sourceId}
+        and ${sourceKeys.system} = allocation.system
+        and ${sourceKeys.externalId} = allocation.external_id
+      returning ${sourceKeys.system}, ${sourceKeys.externalId}
+    `);
+    return transferred.map(({ system, external_id }) => ({
+      system,
+      externalId: external_id,
+    }));
+  }
+
+  // In a single statement and in key order: two commands inserting the same
+  // keys then wait on them in the same order, and cannot deadlock.
+  private async attachNewSourceKeys(
+    keys: readonly AllocatedSourceKey[],
+  ): Promise<void> {
+    if (keys.length === 0) {
+      return;
+    }
+    await this.db
+      .insert(sourceKeys)
+      .values(
+        [...keys]
+          .sort(compareSourceKeys)
+          .map((key) => ({ ...key, originProjectId: key.projectId })),
+      );
   }
 
   private async findOne(condition: SQL): Promise<Project | null> {
@@ -126,14 +238,13 @@ export class DrizzleProjectRepository implements ProjectRepository {
   }
 
   async insert(project: NewProject): Promise<Project> {
-    const { sourceKeys: keys, ...attributes } = project;
     try {
       const [{ createdAt }] = await this.db
         .insert(projects)
-        .values(attributes)
+        .values(toProjectRow(project))
         .returning({ createdAt: projects.createdAt });
       await this.db.insert(sourceKeys).values(
-        keys.map((key) => ({
+        project.sourceKeys.map((key) => ({
           ...key,
           projectId: project.id,
           originProjectId: project.id,
@@ -144,6 +255,37 @@ export class DrizzleProjectRepository implements ProjectRepository {
       throw toDuplicateError(error) ?? error;
     }
   }
+}
+
+type AllocatedSourceKey = SourceKey & { readonly projectId: ProjectId };
+
+// The project columns alone. Drizzle takes mutable arrays, the domain hands
+// out readonly ones.
+function toProjectRow(project: NewProject): typeof projects.$inferInsert {
+  const { id, label, ownerSiren, status, mergedInto, splitInto } = project;
+  return {
+    id,
+    label,
+    ownerSiren,
+    status,
+    mergedInto,
+    splitInto: splitInto && [...splitInto],
+  };
+}
+
+function isSameKey(key: SourceKey, other: SourceKey): boolean {
+  return key.system === other.system && key.externalId === other.externalId;
+}
+
+function compareSourceKeys(key: SourceKey, other: SourceKey): number {
+  return (
+    compare(key.system, other.system) ||
+    compare(key.externalId, other.externalId)
+  );
+}
+
+function compare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function isSourceKey(key: SourceKey): SQL | undefined {
